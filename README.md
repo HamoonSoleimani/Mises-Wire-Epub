@@ -18,6 +18,7 @@ A versatile Python script that converts articles from [Mises Wire](https://mises
 - [readability-lxml](https://pypi.org/project/readability-lxml/)
 - [EbookLib](https://pypi.org/project/EbookLib/)
 
+
 ## Installation
 
 1. **Clone the repository:**
@@ -31,11 +32,10 @@ A versatile Python script that converts articles from [Mises Wire](https://mises
    ```bash
    pip install -r requirements.txt
 
-
 ## Usage
 
    ```bash
    python convert_mises_wire.py --all
 
-
+## Example
 python convert_mises_wire.py --all --pages 1000 --save_dir ./output --epub_title "My Mises Wire Collection"

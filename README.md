@@ -2,6 +2,7 @@
 
 A versatile Python script that converts articles from [Mises Wire](https://mises.org/wire) into a single, well-indexed EPUB file. The script crawls through the paginated index pages (up to 1000 by default), extracts article content, and compiles all the articles into one combined EPUB file with proper chapter titles and a table of contents.
 
+
 ## Features
 
 - **Bulk Processing:** Scans up to 1000 index pages to collect all article links.
@@ -17,6 +18,10 @@ A versatile Python script that converts articles from [Mises Wire](https://mises
 - [beautifulsoup4](https://pypi.org/project/beautifulsoup4/)
 - [readability-lxml](https://pypi.org/project/readability-lxml/)
 - [EbookLib](https://pypi.org/project/EbookLib/)
+
+
+## License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 
 ## Installation
@@ -39,3 +44,5 @@ A versatile Python script that converts articles from [Mises Wire](https://mises
 
 ## Example
 python convert_mises_wire.py --all --pages 1000 --save_dir ./output --epub_title "My Mises Wire Collection"
+
+

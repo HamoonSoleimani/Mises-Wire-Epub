@@ -213,7 +213,7 @@
     "    parser = argparse.ArgumentParser(description='Convert Mises Wire articles into a single EPUB file.')\n",
     "    parser.add_argument('--all', action='store_true', help='Convert all articles from Mises Wire index pages.')\n",
     "    parser.add_argument('--pages', type=int, default=1000, help='Number of index pages to check when using --all.')\n",
-    "    parser.add_argument('--save_dir', type=str, default=r\"C:\\Users\\hamoo\\Desktop\\mises.org\", help='Directory to save the combined EPUB file.')\n",
+    "    parser.add_argument('--save_dir', type=str, default=r\"/path/to/folder/, help='Directory to save the combined EPUB file.')\n",
     "    parser.add_argument('--epub_title', type=str, default=\"Mises Wire Collection\", help='Title for the combined EPUB file.')\n",
     "    args = parser.parse_args()\n",
     "\n",

@@ -33,10 +33,15 @@ A Python script to convert articles from [Mises Wire](https://mises.org/wire) in
 
 ## Options
 --all: Scrape and convert all articles from Mises Wire index pages. This is the primary mode for bulk conversion.
+
 --pages PAGES: Specify the number of index pages to check when using the --all option. Defaults to 1000.
+
 --save_dir SAVE_DIR: Specify the directory where the generated EPUB file(s) will be saved. Defaults to mises_epubs (a folder created in the same directory as the script).
+
 --epub_title EPUB_TITLE: Set the base title for the generated EPUB file(s). Defaults to "Mises Wire Collection".
+
 --split SPLIT: Split the articles into a specified number of EPUB files. For example, --split 10 will create 10 EPUB files, distributing the articles evenly among them.
+
 --cover COVER: Provide the path to an image file to use as the cover for the EPUB. Supported image formats are those supported by Pillow (PIL).
 
 ## Installation

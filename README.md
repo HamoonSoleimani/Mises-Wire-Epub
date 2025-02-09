@@ -49,7 +49,7 @@ A Python script to convert articles from [Mises Wire](https://mises.org/wire) in
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/yourusername/mises-wire-epub-converter.git
+   git clone https://github.com/HamoonSoleimani/Mises-Wire-Epub
    cd mises-wire-epub-converter
 
 

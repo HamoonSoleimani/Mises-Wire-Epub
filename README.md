@@ -50,7 +50,7 @@ A Python script to convert articles from [Mises Wire](https://mises.org/wire) in
 
    ```bash
    git clone https://github.com/HamoonSoleimani/Mises-Wire-Epub
-   cd mises-wire-epub-converter
+   cd Mises-Wire-Epub
 
 
 ## Usage

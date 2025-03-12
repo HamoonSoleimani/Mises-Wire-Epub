@@ -75,7 +75,7 @@ pip install requests beautifulsoup4 readability-lxml ebooklib Pillow python-date
 ## Usage
 
    ```bash
-python convert mises-wire-to-epub.py [OPTIONS]
+python mises-wire-to-epub.py [OPTIONS]
 ```
 
 ## [OPTIONS]

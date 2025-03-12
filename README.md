@@ -75,10 +75,12 @@ pip install requests beautifulsoup4 readability-lxml ebooklib Pillow python-date
 ## Usage
 
    ```bash
-python convert_mises_wire.py [OPTIONS]
+python convert mises-wire-to-epub.py [OPTIONS]
 ```
 
-usage: mises_scraper.py [-h] [--all] [--url URL] [--index INDEX] [--pages PAGES] [--save_dir SAVE_DIR] [--epub_title EPUB_TITLE] [--split SPLIT] [--cover COVER] [--threads THREADS] [--skip_images] [--log {debug,info,warning,error}] [--timeout TIMEOUT] [--proxy PROXY] [--no_ssl_verify]
+## [OPTIONS]
+```bash
+mises-wire-to-epub.py [-h] [--all] [--url URL] [--index INDEX] [--pages PAGES] [--save_dir SAVE_DIR] [--epub_title EPUB_TITLE] [--split SPLIT] [--cover COVER] [--threads THREADS] [--skip_images] [--log {debug,info,warning,error}] [--timeout TIMEOUT] [--proxy PROXY] [--no_ssl_verify]
 
 Convert Mises Wire articles into EPUB files with enhanced image handling.
 
@@ -100,5 +102,5 @@ options:
   --timeout TIMEOUT     Timeout in seconds for article processing.
   --proxy PROXY         Proxy URL to use for requests (e.g. http://127.0.0.1:8080).
   --no_ssl_verify       Disable SSL certificate verification.
-
+```
 

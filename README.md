@@ -1,106 +1,190 @@
-# Mises Wire EPUB Generator
+# Mises.org EPUB Generator
 
-This Python script scrapes articles from the [Mises Wire](https://mises.org/wire) website and converts them into EPUB ebooks, with a focus on robust image handling and metadata extraction. It offers various options for customization, including multi-threading, proxy support, and image skipping.
+A Python script to download articles from selected sections of Mises.org (currently Mises Wire and Power & Market) and compile them into well-formatted EPUB e-books, complete with metadata and images.
 
-## Features
+[![Python Version](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-*   **Comprehensive Article Scraping:**  Fetches articles from the Mises Wire index page, including pagination support.  Can also process a single article URL.
-*   **Robust Metadata Extraction:**  Extracts article metadata (author, date, tags, summary, title, and featured image) using multiple fallback methods to ensure maximum data retrieval, even with variations in website structure.
-*   **Advanced Image Handling:**
-    *   Downloads and embeds images within the EPUB.
-    *   Handles both regular image URLs and data URIs (Base64 encoded images).
-    *   Filters out small or irrelevant images.
-    *   Retries image downloads with exponential backoff.
-    *   Option to skip image downloading for faster processing and smaller EPUB files.
-    * **New:**  Filters out a predefined list of "noisy" or undesired images (e.g., social media share images) and images that match specific URL patterns.
-*   **Readability Enhancement:** Uses the `readability-lxml` library for improved content extraction, with a fallback to manual extraction for cases where Readability fails.
-*   **EPUB Creation:**  Generates well-formed EPUB files with:
-    *   Table of Contents.
-    *   Customizable title and cover image.
-    *   Article metadata inclusion (author, date, tags, summary).
-    *   Proper image embedding.
-    *   Basic CSS styling.
-*   **Multi-threading:** Uses a thread pool for concurrent article processing, significantly speeding up the conversion of multiple articles.
-*   **Proxy Support:**  Allows specifying a proxy server for all HTTP requests.
-*   **SSL Verification Control:** Option to disable SSL certificate verification (use with caution).
-*   **Command-Line Interface:**  Provides a flexible command-line interface with various options.
-*   **Logging:** Detailed logging with configurable levels (debug, info, warning, error) to both a file and the console.
-* **New:** Dynamically rotates through a list of user-agents to reduce the chance of being blocked.
-* **New:** Sanitizes titles for safe filename creation, and adds more robust URL validation.
-* **New:** Handles concatenated metadata in image URLs
-* **New:** Introduces a timeout to article processing with argparse
-* **New:** Improved sorting of chapters by date
-* **New:** Option to split the collected articles in multiple ebooks.
+## Key Features
 
-## Requirements
+*   **Multi-Section Support:** Fetch articles from `Mises Wire` and `Power & Market`. Easily extendable.
+*   **Flexible Input:**
+    *   Fetch recent articles from specified sections.
+    *   Process a single article URL.
+    *   Process a list of URLs from a text file.
+*   **Robust Content Extraction:** Uses `readability-lxml` for main content extraction with a custom fallback mechanism for difficult pages.
+*   **Metadata Preservation:** Extracts and includes title, author, publication date, tags, and summary in the EPUB.
+*   **Image Handling:**
+    *   Downloads and embeds images (including featured images).
+    *   Handles `data:` URI images.
+    *   Validates images and skips tiny or corrupt ones.
+    *   Configurable list/patterns for ignoring problematic images (e.g., generic banners).
+    *   Option to skip image processing entirely (`--skip-images`).
+*   **EPUB Generation:**
+    *   Creates EPUB 3 compatible files.
+    *   Sorts articles by publication date (most recent first).
+    *   Adds a cover image (optional).
+    *   Includes an "About This Collection" page.
+    *   Applies CSS for improved formatting and readability.
+    *   Organizes EPUB internal structure (folders for chapters, images, styles).
+    *   Option to split large collections into multiple volumes (`--split`).
+*   **Filtering:** Filter articles by publication date range (`--start-date`, `--end-date`). Limit total articles processed (`--max-articles`).
+*   **Network Robustness:**
+    *   Automatic retries for failed network requests (articles, images).
+    *   Configurable delay between requests to be polite to the server.
+    *   Configurable request timeout.
+    *   Proxy support.
+    *   User-Agent rotation.
+    *   SSL verification control.
+*   **Performance:**
+    *   Uses multithreading to process articles concurrently.
+    *   Optional file-based caching to speed up subsequent runs.
+*   **Configuration:** Controlled via command-line arguments.
+*   **Logging:** Detailed logging to console and file (`mises_epub_generator.log`) with configurable levels.
+*   **Graceful Shutdown:** Attempts to shut down cleanly on `Ctrl+C`.
 
-*   Python 3.7+
-*   `requests`
-*   `beautifulsoup4`
-*   `readability-lxml`
-*   `ebooklib`
-*   `Pillow` (PIL)
-*   `python-dateutil`
-*   `tqdm`
-*   `certifi`
+## Prerequisites
 
-Install the required packages using pip:
-
-```bash
-pip install requests beautifulsoup4 readability-lxml ebooklib Pillow python-dateutil tqdm certifi
-```
-
-## Options
---all: Scrape and convert all articles from Mises Wire index pages. This is the primary mode for bulk conversion.
-
---pages PAGES: Specify the number of index pages to check when using the --all option. Defaults to 1000.
-
---save_dir SAVE_DIR: Specify the directory where the generated EPUB file(s) will be saved. Defaults to mises_epubs (a folder created in the same directory as the script).
-
---epub_title EPUB_TITLE: Set the base title for the generated EPUB file(s). Defaults to "Mises Wire Collection".
-
---split SPLIT: Split the articles into a specified number of EPUB files. For example, --split 10 will create 10 EPUB files, distributing the articles evenly among them.
-
---cover COVER: Provide the path to an image file to use as the cover for the EPUB. Supported image formats are those supported by Pillow (PIL).
+*   Python 3.7 or higher
 
 ## Installation
 
-1. **Clone the repository:**
+1.  **Clone the repository or download the script:**
+    ```bash
+    # If using git
+    git clone <repository_url>
+    cd <repository_directory>
+    # Or just download mises_epub_generator.py
+    ```
 
-   ```bash
-   git clone https://github.com/HamoonSoleimani/Mises-Wire-Epub
-   cd Mises-Wire-Epub
-
+2.  **Install required Python libraries:**
+    ```bash
+    pip install requests beautifulsoup4 readability-lxml ebooklib Pillow python-dateutil tqdm certifi urllib3
+    ```
+    *(It's recommended to use a virtual environment)*
 
 ## Usage
 
-   ```bash
-python mises-wire-to-epub.py [OPTIONS]
-```
+Run the script from your terminal using `python mises_epub_generator.py` followed by the desired options.
 
-## [OPTIONS]
-```bash
-mises-wire-to-epub.py [-h] [--all] [--url URL] [--index INDEX] [--pages PAGES] [--save_dir SAVE_DIR] [--epub_title EPUB_TITLE] [--split SPLIT] [--cover COVER] [--threads THREADS] [--skip_images] [--log {debug,info,warning,error}] [--timeout TIMEOUT] [--proxy PROXY] [--no_ssl_verify]
+**Examples:**
 
-Convert Mises Wire articles into EPUB files with enhanced image handling.
+1.  **Get recent articles from Mises Wire (default):**
+    ```bash
+    python mises_epub_generator.py
+    ```
+    *(This will fetch articles from the first 50 pages of Mises Wire and save as `Mises_wire_Collection.epub` in `./mises_epub`)*
 
-options:
-  -h, --help            show this help message and exit
-  --all                 Convert all articles.
-  --url URL             URL of a specific article to convert.
-  --index INDEX         Index URL to fetch articles from.
-  --pages PAGES         Number of index pages to check.
-  --save_dir SAVE_DIR   Directory to save the EPUB files.
-  --epub_title EPUB_TITLE
-                        Base title for the EPUB.
-  --split SPLIT         Split into multiple EPUBs with N articles each.
-  --cover COVER         Path to a cover image.
-  --threads THREADS     Number of threads to use for processing.
-  --skip_images         Skip downloading images (faster, smaller EPUB).
-  --log {debug,info,warning,error}
-                        Logging level.
-  --timeout TIMEOUT     Timeout in seconds for article processing.
-  --proxy PROXY         Proxy URL to use for requests (e.g. http://127.0.0.1:8080).
-  --no_ssl_verify       Disable SSL certificate verification.
-```
+2.  **Get articles from both Wire and Power & Market, increase pages:**
+    ```bash
+    python mises_epub_generator.py --include wire+powermarket --pages 100
+    ```
+    *(Saves as `Mises_powermarket_wire_Collection.epub`)*
 
+3.  **Process a single specific article:**
+    ```bash
+    python mises_epub_generator.py --url "https://mises.org/power-market/public-funding-universities-inefficient-and-immoral"
+    ```
+    *(Saves using the article's title as the filename)*
+
+4.  **Fetch Wire articles from a specific date range:**
+    ```bash
+    python mises_epub_generator.py --include wire --start-date 2023-01-01 --end-date 2023-12-31
+    ```
+
+5.  **Fetch Power & Market articles, add a cover, and split into volumes of 50:**
+    ```bash
+    python mises_epub_generator.py --include powermarket --cover ./my_cover.jpg --split 50 --epub-title "Power_Market_Vol"
+    ```
+    *(Saves as `Power_Market_Vol_Part_01.epub`, `Power_Market_Vol_Part_02.epub`, etc.)*
+
+6.  **Process URLs from a file, skipping images, using cache:**
+    ```bash
+    python mises_epub_generator.py --input-file ./my_article_list.txt --skip-images --cache
+    ```
+    *(`my_article_list.txt` should contain one URL per line)*
+
+7.  **Fetch all available pages from Wire (be careful, can be slow):**
+    ```bash
+    python mises_epub_generator.py --include wire --all-pages
+    ```
+
+8.  **See all available options:**
+    ```bash
+    python mises_epub_generator.py --help
+    ```
+
+## Command-Line Options
+
+
+usage: mises_epub_generator.py [-h] [--include SECTIONS] [--url URL] [--input-file FILE] [--all-pages] [--pages N] [--max-articles N]
+[--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD] [--save-dir DIR] [--epub-title TITLE] [--split N] [--cover PATH] [--skip-images]
+[--threads N] [--timeout SEC] [--delay SEC] [--retries N] [--proxy URL] [--no-ssl-verify] [--cache] [--clear-cache]
+[--log {debug,info,warning,error,critical}] [--log-file FILE]
+
+Generate EPUB collections from Mises.org articles (Wire, Power & Market).
+
+Article Source Options:
+--include SECTIONS Sections to include, separated by "+".
+Available: wire, powermarket
+Example: --include wire+powermarket (default: wire)
+--url URL URL of a single specific article to convert.
+--input-file FILE Path to a text file containing one article URL per line.
+--all-pages Attempt to fetch all available pages from index (overrides --pages).
+--pages N Number of index pages per section to check (default: 50). Use --all-pages for unlimited.
+--max-articles N Maximum total number of articles to process.
+
+Filtering Options:
+--start-date YYYY-MM-DD
+Only include articles published on or after this date.
+--end-date YYYY-MM-DD
+Only include articles published on or before this date.
+
+Output Options:
+--save-dir DIR Directory to save the EPUB file(s) (default: ./mises_epub).
+--epub-title TITLE Custom base title for the EPUB file.
+(Default: generated from included sections/date range)
+--split N Split into multiple EPUBs with approx. N articles each.
+--cover PATH Path to a local cover image (JPEG, PNG, GIF, WebP).
+--skip-images Do not download or include any images.
+
+Network and Performance Options:
+--threads N Number of parallel threads for processing articles (default: 4).
+--timeout SEC HTTP request timeout in seconds (default: 60).
+--delay SEC Delay between HTTP requests in seconds (default: 0.75).
+--retries N Number of retries for failed HTTP requests (default: 3).
+--proxy URL Proxy URL (e.g., http://user:pass@host:port).
+--no-ssl-verify Disable SSL certificate verification (use with caution!).
+--cache Enable simple file caching for fetched URLs.
+--clear-cache Clear the cache directory before starting.
+
+Logging and Debugging:
+--log {debug,info,warning,error,critical}
+Set logging level (default: info).
+--log-file FILE File to write logs to (default: mises_epub_generator.log).
+
+## Caching
+
+Using the `--cache` flag enables simple file-based caching in the `./.mises_cache` directory. This stores the raw HTML content and downloaded images. If you run the script again with `--cache` for the same articles/images, it will use the cached files instead of re-downloading, significantly speeding up subsequent runs or resuming after interruptions.
+
+Use `--clear-cache` to remove the cache directory before starting a new run if you suspect cached data is stale or corrupted.
+
+## Error Handling & Logging
+
+*   The script attempts to handle network errors gracefully with retries.
+*   Errors during article processing are logged, and the script will typically skip the problematic article and continue.
+*   Detailed logs are written to `mises_epub_generator.log` (and the console). Check this file for troubleshooting. Use `--log debug` for maximum detail.
+
+## Contributing
+
+Contributions (bug reports, feature requests, pull requests) are welcome! Please open an issue or PR on the repository (if applicable).
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file (if available) or the header in this README for details.
+
+## Disclaimer
+
+*   This script is provided "as is", without warranty of any kind. Use it responsibly.
+*   **Respect Mises.org's Terms of Service and copyright.** This tool is intended for personal, offline reading convenience. Do not abuse the site or redistribute the generated content inappropriately.
+*   Web scraping scripts can break if the source website's structure changes. Future updates to Mises.org may require modifications to this script.

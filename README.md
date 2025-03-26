@@ -116,7 +116,7 @@ Run the script from your terminal using `python mises_epub_generator.py` followe
 
 ## Command-Line Options
 
-
+```
 usage: mises_epub_generator.py [-h] [--include SECTIONS] [--url URL] [--input-file FILE] [--all-pages] [--pages N] [--max-articles N]
 [--start-date YYYY-MM-DD] [--end-date YYYY-MM-DD] [--save-dir DIR] [--epub-title TITLE] [--split N] [--cover PATH] [--skip-images]
 [--threads N] [--timeout SEC] [--delay SEC] [--retries N] [--proxy URL] [--no-ssl-verify] [--cache] [--clear-cache]
@@ -162,7 +162,7 @@ Logging and Debugging:
 --log {debug,info,warning,error,critical}
 Set logging level (default: info).
 --log-file FILE File to write logs to (default: mises_epub_generator.log).
-
+```
 ## Caching
 
 Using the `--cache` flag enables simple file-based caching in the `./.mises_cache` directory. This stores the raw HTML content and downloaded images. If you run the script again with `--cache` for the same articles/images, it will use the cached files instead of re-downloading, significantly speeding up subsequent runs or resuming after interruptions.

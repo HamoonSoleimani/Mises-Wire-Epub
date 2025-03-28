@@ -1,6 +1,0 @@
-requests
-beautifulsoup4
-readability-lxml
-ebooklib
-Pillow
-python-dateutil

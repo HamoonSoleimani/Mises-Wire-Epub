@@ -41,7 +41,7 @@ This Python script is a versatile tool for scraping, processing, and converting 
 ### Basic Usage
 
 ```bash
-python mises_scraper.py --all
+python mises_epub_generator.py --all
 ```
 
 This will scrape and convert all available articles from Mises Wire.
@@ -49,7 +49,7 @@ This will scrape and convert all available articles from Mises Wire.
 ### Advanced Options
 
 ```bash
-python mises_scraper.py [OPTIONS]
+python mises_epub_generator.py [OPTIONS]
 ```
 
 #### Options
@@ -75,27 +75,27 @@ python mises_scraper.py [OPTIONS]
 
 1. Convert all Mises Wire articles:
    ```bash
-   python mises_scraper.py --all
+   python mises_epub_generator.py --all
    ```
 
 2. Convert a specific article:
    ```bash
-   python mises_scraper.py --url https://mises.org/wire/example-article
+   python mises_epub_generator.py --url https://mises.org/wire/example-article
    ```
 
 3. Split articles into multiple EPUBs with 50 articles per file:
    ```bash
-   python mises_scraper.py --all --split 50
+   python mises_epub_generator.py --all --split 50
    ```
 
 4. Include Power Market articles:
    ```bash
-   python mises_scraper.py --all --include powermarket
+   python mises_epub_generator.py --all --include powermarket
    ```
 
 ## Logging
 
-The script generates detailed logs in `mises_scraper.log`, which can help diagnose issues during scraping and processing.
+The script generates detailed logs in `mises_epub_generator.log`, which can help diagnose issues during scraping and processing.
 
 ## Caching
 

@@ -11,28 +11,62 @@ import hashlib
 import time
 import base64
 import certifi
+import traceback
 from datetime import datetime
 from io import BytesIO
 from urllib.parse import urljoin, urlparse
 from dateutil import parser as date_parser
 from bs4 import BeautifulSoup
-from readability import Document
+from readability.readability import Document
+
 from ebooklib import epub
 from PIL import Image
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                           QLabel, QLineEdit, QSpinBox, QPushButton, QFileDialog, QComboBox, 
-                           QCheckBox, QProgressBar, QTabWidget, QTextEdit, QGroupBox, 
-                           QFormLayout, QRadioButton, QButtonGroup, QMessageBox, QSplitter,
-                           QScrollArea, QStyle, QListWidget, QListWidgetItem, QFrame)
-from PyQt5.QtCore import (Qt, QThread, pyqtSignal, pyqtSlot, QSize, QUrl, QSettings, 
-                         QCoreApplication, QTimer, QMutex)
-from PyQt5.QtGui import QIcon, QPixmap, QColor, QFont, QDesktopServices, QTextCursor
 
-# Global configuration - will be updated via UI
+# Suppress annoying PIL logs if necessary
+# logging.getLogger('PIL').setLevel(logging.WARNING)
+
+from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+                           QLabel, QLineEdit, QSpinBox, QPushButton, QFileDialog, QComboBox,
+                           QCheckBox, QProgressBar, QTabWidget, QTextEdit, QGroupBox,
+                           QFormLayout, QRadioButton, QButtonGroup, QMessageBox, QSplitter,
+                           QScrollArea, QStyle, QListWidget, QListWidgetItem, QFrame,
+                           QSlider, QGridLayout, QTreeWidget, QTreeWidgetItem, QHeaderView,
+                           QToolBar, QAction, QStatusBar, QSystemTrayIcon, QMenu, QSizePolicy,
+                           QTextBrowser, QDial, QToolButton,
+                           QStackedWidget, QWizard, QWizardPage, QCalendarWidget,
+                           QTimeEdit, QDateEdit, QFontComboBox, QColorDialog, QInputDialog,
+                           QTableWidget, QTableWidgetItem, QAbstractItemView,
+                           QStyledItemDelegate, QStyleOptionViewItem,
+                           QPlainTextEdit, QSizeGrip, QRubberBand, QGraphicsView,
+                           QGraphicsScene, QGraphicsPixmapItem, QGraphicsTextItem, QDialog,
+                           QDialogButtonBox)
+from PyQt5.QtCore import (Qt, QThread, pyqtSignal, pyqtSlot, QSize, QUrl, QSettings,
+                         QCoreApplication, QTimer, QMutex, QPropertyAnimation, QRect,
+                         QEasingCurve, QParallelAnimationGroup, QSequentialAnimationGroup,
+                         QAbstractAnimation, QVariantAnimation, QPointF, QSizeF,
+                         QDateTime, QDate, QTime, QLocale, QTranslator, QLibraryInfo,
+                         QStandardPaths, QDir, QFileSystemWatcher, QMimeData,
+                         QProcess, QTextStream, QIODevice, QBuffer,
+                         QByteArray, QDataStream, QFileInfo, QTemporaryDir,
+                         QTemporaryFile, QTextCodec, QRegularExpression,
+                         QSortFilterProxyModel, QStringListModel, QAbstractTableModel,
+                         QModelIndex, QVariant, QItemSelectionModel, QItemSelection)
+from PyQt5.QtGui import (QIcon, QPixmap, QColor, QFont, QDesktopServices, QTextCursor,
+                        QPalette, QBrush, QPen, QLinearGradient, QRadialGradient,
+                        QConicalGradient, QTransform, QPolygon, QPolygonF,QPainter, QPainterPath,
+                        QKeySequence, QTextCharFormat, QTextBlockFormat, QTextListFormat,
+                        QTextFrameFormat, QTextTableFormat, QTextImageFormat,
+                        QSyntaxHighlighter, QTextDocument, QFontMetrics, QFontInfo,
+                        QValidator, QIntValidator, QDoubleValidator, QRegExpValidator,
+                        QMovie, QImageReader, QImageWriter, QDrag, QCursor,QClipboard)
+
+# Global configuration variables
 PROXIES = {}
 VERIFY = certifi.where()
 TIMEOUT = 30
 CACHE_DIR = None
+APP_VERSION = "2.0.0"
+APP_NAME = "Enhanced Mises Wire EPUB Generator"
 
 # Define URLs to ignore (these images will be skipped)
 IGNORED_IMAGE_URLS = {
@@ -50,21 +84,713 @@ IGNORED_IMAGE_URLS = {
 IGNORED_URL_PATTERNS = [
     r'featured_image\.(jpeg|jpg|png|webp)$',
     r'/podcasts/.*/images/',
-    r'/mises\.org$'  # For the invalid base domain URL
+    r'/mises\.org$'
 ]
 
 # User-Agent header for HTTP requests with rotation capability
 USER_AGENTS = [
     ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
      'AppleWebKit/537.36 (KHTML, like Gecko) '
-     'Chrome/91.0.4472.124 Safari/537.36'),
+     'Chrome/120.0.0.0 Safari/537.36'),
     ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
      'AppleWebKit/605.1.15 (KHTML, like Gecko) '
-     'Version/15.0 Safari/605.1.15'),
+     'Version/17.0 Safari/605.1.15'),
     ('Mozilla/5.0 (X11; Linux x86_64) '
      'AppleWebKit/537.36 (KHTML, like Gecko) '
-     'Chrome/92.0.4515.107 Safari/537.36')
+     'Chrome/120.0.0.0 Safari/537.36'),
+    ('Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) '
+     'Gecko/20100101 Firefox/120.0'),
+    ('Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) '
+     'Gecko/20100101 Firefox/120.0')
 ]
+
+# Dark mode stylesheet
+DARK_STYLESHEET = """
+QMainWindow {
+    background-color: #2b2b2b;
+    color: #ffffff;
+}
+
+QWidget {
+    background-color: #2b2b2b;
+    color: #ffffff;
+    selection-background-color: #3daee9;
+    selection-color: #ffffff;
+}
+
+QTabWidget::pane {
+    border: 1px solid #555555;
+    background-color: #3c3c3c;
+}
+
+QTabWidget::tab-bar {
+    alignment: center;
+}
+
+QTabBar::tab {
+    background-color: #4a4a4a;
+    color: #ffffff;
+    padding: 8px 16px;
+    margin-right: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+QTabBar::tab:selected {
+    background-color: #3daee9;
+    color: #ffffff;
+}
+
+QTabBar::tab:hover {
+    background-color: #5a5a5a;
+}
+
+QPushButton {
+    background-color: #3daee9;
+    color: #ffffff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #4fc3f7;
+}
+
+QPushButton:pressed {
+    background-color: #0288d1;
+}
+
+QPushButton:disabled {
+    background-color: #555555;
+    color: #999999;
+}
+
+QLineEdit, QTextEdit, QSpinBox, QComboBox {
+    background-color: #404040;
+    color: #ffffff;
+    border: 2px solid #555555;
+    padding: 6px;
+    border-radius: 4px;
+}
+
+QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border-color: #3daee9;
+}
+
+QGroupBox {
+    font-weight: bold;
+    border: 2px solid #555555;
+    border-radius: 4px;
+    margin-top: 1ex;
+    color: #3daee9;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px 0 5px;
+}
+
+QListWidget {
+    background-color: #404040;
+    border: 1px solid #555555;
+    border-radius: 4px;
+}
+
+QListWidget::item {
+    padding: 8px;
+    border-bottom: 1px solid #555555;
+}
+
+QListWidget::item:selected {
+    background-color: #3daee9;
+}
+
+QListWidget::item:hover {
+    background-color: #5a5a5a;
+}
+
+QProgressBar {
+    border: 2px solid #555555;
+    border-radius: 4px;
+    text-align: center;
+    background-color: #404040;
+    color: #ffffff;
+}
+
+QProgressBar::chunk {
+    background-color: #3daee9;
+    border-radius: 2px;
+}
+
+QCheckBox {
+    color: #ffffff;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+}
+
+QCheckBox::indicator:unchecked {
+    background-color: #404040;
+    border: 2px solid #555555;
+    border-radius: 3px;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #3daee9;
+    border: 2px solid #3daee9;
+    border-radius: 3px;
+}
+
+QRadioButton {
+    color: #ffffff;
+    spacing: 8px;
+}
+
+QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+}
+
+QRadioButton::indicator:unchecked {
+    background-color: #404040;
+    border: 2px solid #555555;
+    border-radius: 9px;
+}
+
+QRadioButton::indicator:checked {
+    background-color: #3daee9;
+    border: 2px solid #3daee9;
+    border-radius: 9px;
+}
+
+QSlider::groove:horizontal {
+    border: 1px solid #555555;
+    height: 8px;
+    background-color: #404040;
+    border-radius: 4px;
+}
+
+QSlider::handle:horizontal {
+    background-color: #3daee9;
+    border: 1px solid #3daee9;
+    width: 18px;
+    margin: -5px 0;
+    border-radius: 9px;
+}
+
+QSlider::sub-page:horizontal {
+    background-color: #3daee9;
+    border-radius: 4px;
+}
+
+QScrollBar:vertical {
+    background-color: #404040;
+    width: 12px;
+    border-radius: 6px;
+    margin: 0px 0px 0px 0px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #3daee9;
+    border-radius: 6px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #4fc3f7;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    background-color: #404040;
+    height: 12px;
+    border-radius: 6px;
+    margin: 0px 0px 0px 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #3daee9;
+    border-radius: 6px;
+    min-width: 20px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #4fc3f7;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+QMenuBar {
+    background-color: #2b2b2b;
+    color: #ffffff;
+    border-bottom: 1px solid #555555;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 6px 12px;
+}
+
+QMenuBar::item:selected {
+    background-color: #3daee9;
+}
+
+QMenu {
+    background-color: #404040;
+    color: #ffffff;
+    border: 1px solid #555555;
+}
+
+QMenu::item {
+    padding: 6px 12px;
+}
+
+QMenu::item:selected {
+    background-color: #3daee9;
+}
+
+QStatusBar {
+    background-color: #2b2b2b;
+    color: #ffffff;
+    border-top: 1px solid #555555;
+}
+
+QToolBar {
+    background-color: #3c3c3c;
+    border: none;
+    spacing: 4px;
+}
+
+QToolButton {
+    background-color: transparent;
+    color: #ffffff;
+    padding: 6px;
+    border-radius: 4px;
+}
+
+QToolButton:hover {
+    background-color: #5a5a5a;
+}
+
+QToolButton:pressed {
+    background-color: #3daee9;
+}
+
+QTreeWidget {
+    background-color: #404040;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    alternate-background-color: #4a4a4a;
+}
+
+QTreeWidget::item {
+    padding: 4px;
+    border-bottom: 1px solid #555555;
+}
+
+QTreeWidget::item:selected {
+    background-color: #3daee9;
+}
+
+QTreeWidget::item:hover {
+    background-color: #5a5a5a;
+}
+
+QHeaderView::section {
+    background-color: #4a4a4a;
+    color: #ffffff;
+    padding: 6px;
+    border: none;
+    border-right: 1px solid #555555;
+    border-bottom: 1px solid #555555;
+}
+
+QSplitter::handle {
+    background-color: #555555;
+}
+
+QSplitter::handle:horizontal {
+    width: 3px;
+}
+
+QSplitter::handle:vertical {
+    height: 3px;
+}
+
+QTableWidget {
+    background-color: #404040;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    gridline-color: #555555;
+    alternate-background-color: #4a4a4a;
+}
+
+QTableWidget::item {
+    padding: 8px;
+}
+
+QTableWidget::item:selected {
+    background-color: #3daee9;
+}
+"""
+
+# Light mode stylesheet
+LIGHT_STYLESHEET = """
+QMainWindow {
+    background-color: #ffffff;
+    color: #333333;
+}
+
+QWidget {
+    background-color: #ffffff;
+    color: #333333;
+    selection-background-color: #3daee9;
+    selection-color: #ffffff;
+}
+
+QTabWidget::pane {
+    border: 1px solid #cccccc;
+    background-color: #f5f5f5;
+}
+
+QTabWidget::tab-bar {
+    alignment: center;
+}
+
+QTabBar::tab {
+    background-color: #e0e0e0;
+    color: #333333;
+    padding: 8px 16px;
+    margin-right: 2px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
+QTabBar::tab:selected {
+    background-color: #3daee9;
+    color: #ffffff;
+}
+
+QTabBar::tab:hover {
+    background-color: #f0f0f0;
+}
+
+QPushButton {
+    background-color: #3daee9;
+    color: #ffffff;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #4fc3f7;
+}
+
+QPushButton:pressed {
+    background-color: #0288d1;
+}
+
+QPushButton:disabled {
+    background-color: #cccccc;
+    color: #666666;
+}
+
+QLineEdit, QTextEdit, QSpinBox, QComboBox {
+    background-color: #ffffff;
+    color: #333333;
+    border: 2px solid #cccccc;
+    padding: 6px;
+    border-radius: 4px;
+}
+
+QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border-color: #3daee9;
+}
+
+QGroupBox {
+    font-weight: bold;
+    border: 2px solid #cccccc;
+    border-radius: 4px;
+    margin-top: 1ex;
+    color: #3daee9;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px 0 5px;
+}
+
+QListWidget {
+    background-color: #ffffff;
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+}
+
+QListWidget::item {
+    padding: 8px;
+    border-bottom: 1px solid #eeeeee;
+}
+
+QListWidget::item:selected {
+    background-color: #3daee9;
+    color: #ffffff;
+}
+
+QListWidget::item:hover {
+    background-color: #f0f0f0;
+}
+
+QProgressBar {
+    border: 2px solid #cccccc;
+    border-radius: 4px;
+    text-align: center;
+    background-color: #ffffff;
+    color: #333333;
+}
+
+QProgressBar::chunk {
+    background-color: #3daee9;
+    border-radius: 2px;
+}
+
+QCheckBox {
+    color: #333333;
+    spacing: 8px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+}
+
+QCheckBox::indicator:unchecked {
+    background-color: #ffffff;
+    border: 2px solid #cccccc;
+    border-radius: 3px;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #3daee9;
+    border: 2px solid #3daee9;
+    border-radius: 3px;
+}
+
+QRadioButton {
+    color: #333333;
+    spacing: 8px;
+}
+
+QRadioButton::indicator {
+    width: 18px;
+    height: 18px;
+}
+
+QRadioButton::indicator:unchecked {
+    background-color: #ffffff;
+    border: 2px solid #cccccc;
+    border-radius: 9px;
+}
+
+QRadioButton::indicator:checked {
+    background-color: #3daee9;
+    border: 2px solid #3daee9;
+    border-radius: 9px;
+}
+
+QSlider::groove:horizontal {
+    border: 1px solid #cccccc;
+    height: 8px;
+    background-color: #f0f0f0;
+    border-radius: 4px;
+}
+
+QSlider::handle:horizontal {
+    background-color: #3daee9;
+    border: 1px solid #3daee9;
+    width: 18px;
+    margin: -5px 0;
+    border-radius: 9px;
+}
+
+QSlider::sub-page:horizontal {
+    background-color: #3daee9;
+    border-radius: 4px;
+}
+
+QScrollBar:vertical {
+    background-color: #f0f0f0;
+    width: 12px;
+    border-radius: 6px;
+    margin: 0px 0px 0px 0px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #3daee9;
+    border-radius: 6px;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #4fc3f7;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    background-color: #f0f0f0;
+    height: 12px;
+    border-radius: 6px;
+    margin: 0px 0px 0px 0px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #3daee9;
+    border-radius: 6px;
+    min-width: 20px;
+}
+
+QScrollBar::handle:horizontal:hover {
+    background-color: #4fc3f7;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0px;
+}
+
+QMenuBar {
+    background-color: #ffffff;
+    color: #333333;
+    border-bottom: 1px solid #cccccc;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 6px 12px;
+}
+
+QMenuBar::item:selected {
+    background-color: #3daee9;
+    color: #ffffff;
+}
+
+QMenu {
+    background-color: #ffffff;
+    color: #333333;
+    border: 1px solid #cccccc;
+}
+
+QMenu::item {
+    padding: 6px 12px;
+}
+
+QMenu::item:selected {
+    background-color: #3daee9;
+    color: #ffffff;
+}
+
+QStatusBar {
+    background-color: #ffffff;
+    color: #333333;
+    border-top: 1px solid #cccccc;
+}
+
+QToolBar {
+    background-color: #f5f5f5;
+    border: none;
+    spacing: 4px;
+}
+
+QToolButton {
+    background-color: transparent;
+    color: #333333;
+    padding: 6px;
+    border-radius: 4px;
+}
+
+QToolButton:hover {
+    background-color: #e0e0e0;
+}
+
+QToolButton:pressed {
+    background-color: #3daee9;
+    color: #ffffff;
+}
+
+QTreeWidget {
+    background-color: #ffffff;
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    alternate-background-color: #f9f9f9;
+}
+
+QTreeWidget::item {
+    padding: 4px;
+    border-bottom: 1px solid #eeeeee;
+}
+
+QTreeWidget::item:selected {
+    background-color: #3daee9;
+    color: #ffffff;
+}
+
+QTreeWidget::item:hover {
+    background-color: #f0f0f0;
+}
+
+QHeaderView::section {
+    background-color: #f0f0f0;
+    color: #333333;
+    padding: 6px;
+    border: none;
+    border-right: 1px solid #cccccc;
+    border-bottom: 1px solid #cccccc;
+}
+
+QSplitter::handle {
+    background-color: #cccccc;
+}
+
+QSplitter::handle:horizontal {
+    width: 3px;
+}
+
+QSplitter::handle:vertical {
+    height: 3px;
+}
+
+QTableWidget {
+    background-color: #ffffff;
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    gridline-color: #cccccc;
+    alternate-background-color: #f9f9f9;
+}
+
+QTableWidget::item {
+    padding: 8px;
+}
+
+QTableWidget::item:selected {
+    background-color: #3daee9;
+    color: #ffffff;
+}
+"""
 
 # --- Utility Functions ---
 def get_headers():
@@ -101,6 +827,7 @@ def cached_get(url):
                 response = session.get(url, timeout=TIMEOUT, verify=VERIFY)
                 response.raise_for_status()
                 text = response.text
+            os.makedirs(CACHE_DIR, exist_ok=True)
             with open(cache_file, "w", encoding="utf-8") as f:
                 f.write(text)
             return text
@@ -151,11 +878,9 @@ def should_ignore_image_url(url):
     
     url = clean_image_url(url)
     
-    # Check against explicit list
     if url in IGNORED_IMAGE_URLS:
         return True
     
-    # Check against patterns
     for pattern in IGNORED_URL_PATTERNS:
         if re.search(pattern, url):
             return True
@@ -163,15 +888,32 @@ def should_ignore_image_url(url):
     return False
 
 # --- Core Article Fetching and Processing Functions ---
-def get_article_links(index_url, max_pages=1000, progress_callback=None):
+def get_article_links(index_url, max_pages=9999, progress_callback=None, stop_callback=None, unique_links_check=True):
     """
     Fetch article URLs from the given index site and paginated pages.
-    Returns a list of unique article URLs.
+    This version includes a special alias for /wire -> /mises-wire to correctly filter links.
     """
     all_article_links = set()
+    consecutive_no_new = 0
+    max_consecutive_no_new = 3
+
+    # Determine the target path segment from the index URL (e.g., '/wire' or '/power-market').
+    target_path = urlparse(index_url).path
+    if not target_path.endswith('/'):
+        target_path += '/'
+    logging.info(f"Scraping context detected. Targeting links for path: '{target_path}'")
+
+    # --- START OF THE DEFINITIVE FIX ---
+    # SPECIAL CASE: The user-facing URL '/wire/' contains links that actually start with '/mises-wire/'.
+    # We must account for this alias to correctly identify the articles.
+    aliased_target_path = None
+    if target_path == '/wire/':
+        aliased_target_path = '/mises-wire/'
+        logging.info(f"Applying special alias: Actual link path to check for is '{aliased_target_path}'")
+    # --- END OF THE DEFINITIVE FIX ---
 
     def fetch_page_links(page_num):
-        page_url = f"{index_url}?page={page_num}" if page_num > 1 else index_url
+        page_url = f"{index_url}?page={page_num}" if page_num > 0 else index_url
         logging.debug(f"Fetching index page: {page_url}")
         try:
             page_content = cached_get(page_url)
@@ -182,197 +924,209 @@ def get_article_links(index_url, max_pages=1000, progress_callback=None):
         soup = BeautifulSoup(page_content, 'html.parser')
         page_links = set()
 
-        # Try to find articles with modern class structure
-        articles = soup.find_all('article')
-        if articles:
-            for art in articles:
-                a_tag = art.find('a', href=True)
-                if a_tag:
-                    href = a_tag['href']
-                    if 'rss.xml' in href:
-                        continue
-                    absolute_url = urljoin(index_url, href)
-                    page_links.add(absolute_url)
-        else:
-            # Fallback to finding links containing '/wire/'
-            for a in soup.find_all('a', href=True):
-                href = a['href']
-                if '/wire/' in href and 'rss.xml' not in href:
-                    absolute_url = urljoin(index_url, href)
-                    page_links.add(absolute_url)
+        # These selectors correctly find all potential article links on the page.
+        potential_links = soup.select('article a[href], div.views-field-title span.field-content a[href]')
+
+        for a_tag in potential_links:
+            href = a_tag.get('href', '')
+            if not href or not href.startswith('/'):
+                continue
+
+            absolute_url = urljoin(index_url, href)
+            parsed_url = urlparse(absolute_url)
+
+            # The CRITICAL check, now with alias support:
+            path_is_valid = parsed_url.path.startswith(target_path)
+            if not path_is_valid and aliased_target_path:
+                # If the primary path check fails, check the alias.
+                path_is_valid = parsed_url.path.startswith(aliased_target_path)
+
+            if path_is_valid:
+                page_links.add(absolute_url)
+            else:
+                logging.debug(f"Skipping off-topic link: {absolute_url}")
 
         if not page_links:
-            logging.info(f"No articles found on page {page_num}, might have reached the end.")
+            log_path_info = f"'{target_path}'" + (f" or '{aliased_target_path}'" if aliased_target_path else "")
+            logging.info(f"No articles matching {log_path_info} found on page {page_num}, might have reached the end.")
             return set(), True
 
         return page_links, False
 
-    page_num = 1
+    # Start page count from 0 for Mises.org pagination
+    page_num = 0
     end_reached = False
 
-    while page_num <= max_pages and not end_reached:
+    while page_num < max_pages and not end_reached:
+        if stop_callback and stop_callback():
+            logging.info("Fetching stopped by user")
+            break
+
         links, end_reached = fetch_page_links(page_num)
+        new_links = links - all_article_links
+
+        if page_num == 0 and not new_links:
+            logging.warning(f"No articles found on the first page ({index_url}). Please check the URL and site structure.")
+            break
+
         all_article_links.update(links)
-        
-        if progress_callback:
-            progress_callback(page_num, max_pages, len(all_article_links))
-            
+
+        if unique_links_check and page_num > 0:
+            if not new_links:
+                consecutive_no_new += 1
+                logging.info(f"Page {page_num}: No new unique links found (consecutive: {consecutive_no_new})")
+                if consecutive_no_new >= max_consecutive_no_new:
+                    logging.info(f"Stopping: No new unique links found in {max_consecutive_no_new} consecutive pages")
+                    break
+            else:
+                consecutive_no_new = 0
+                logging.info(f"Page {page_num}: Found {len(new_links)} new unique links. Total: {len(all_article_links)}")
+
+        if progress_callback: progress_callback(page_num + 1, max_pages, len(all_article_links))
+
         page_num += 1
         time.sleep(0.5)
-        if page_num % 10 == 0:
-            logging.info(f"Found {len(all_article_links)} unique article links so far...")
 
-    logging.info(f"Total unique article links found: {len(all_article_links)}")
+    logging.info(f"Total unique article links found for '{target_path}': {len(all_article_links)}")
     return list(all_article_links)
 
+    
 def get_article_metadata(soup, url):
     """
-    Extracts metadata (author, date, tags, summary) from an article's soup object.
-    Uses multiple fallback methods to ensure maximal data extraction.
+    Extracts metadata from an article's soup object.
     """
     metadata = {
-        'author': "Mises Wire",  # Default author
-        'date': '',
-        'tags': [],
-        'summary': "",
-        'title': "",
-        'featured_image': None
+        'author': "Mises Wire", 'date': '', 'tags': [], 'summary': "",
+        'title': "", 'featured_image': None
     }
-
     try:
-        # Extract title
-        title_element = (
-            soup.find('meta', property='og:title') or
-            soup.find('h1', class_='page-header__title') or
-            soup.find('h1', class_='entry-title') or
-            soup.find('h1', itemprop='headline')
-        )
-        if title_element:
-            metadata['title'] = title_element.get('content', title_element.get_text(strip=True)).strip()
+        title_selectors = [
+            'meta[property="og:title"]', 'h1.page-header__title', 'h1.entry-title',
+            'h1[itemprop="headline"]', '.article-title h1', '.node-title', 'title'
+        ]
+        for selector in title_selectors:
+            title_element = soup.select_one(selector)
+            if title_element:
+                metadata['title'] = (title_element.get('content', '').strip() if title_element.name == 'meta'
+                                     else title_element.get_text(strip=True))
+                if metadata['title']: break
 
-        # Extract author with multiple fallback methods
-        author_element = (
-            soup.find('meta', property='author') or
-            soup.find('meta', attrs={'name': 'author'}) or
-            soup.find('a', rel='author')
-        )
-        if author_element:
-            metadata['author'] = author_element.get('content', author_element.get_text(strip=True)).strip()
-        else:
-            details = soup.find('div', {"data-component-id": "mises:element-article-details"})
-            if details:
-                links = details.find_all('a', href=True)
-                for link in links:
-                    if "profile" in link['href']:
-                        metadata['author'] = link.get_text(strip=True)
-                        break
-            else:
-                byline = soup.find('p', class_='byline') or soup.find('span', class_='author')
-                if byline:
-                    metadata['author'] = byline.get_text(strip=True).replace('By ', '').strip()
+        author_selectors = [
+            'meta[property="author"]', 'meta[name="author"]', 'a[rel="author"]',
+            '.byline a', '.author-name', '.field-name-field-author a',
+            '[data-component-id="mises:element-article-details"] a[href*="profile"]'
+        ]
+        for selector in author_selectors:
+            author_element = soup.select_one(selector)
+            if author_element:
+                author = (author_element.get('content', '').strip() if author_element.name == 'meta'
+                          else author_element.get_text(strip=True))
+                if author and author.lower() not in ['by', 'author']:
+                    metadata['author'] = author.replace('By ', '').strip()
+                    break
 
-        # Extract date with multiple fallback methods
-        date_element = (
-            soup.find('meta', property='article:published_time') or
-            soup.find('meta', property='og:article:published_time') or
-            soup.find('time', datetime=True) or
-            soup.find('span', class_='date')
-        )
-        if date_element:
-            metadata['date'] = date_element.get('content', date_element.get('datetime', date_element.get_text(strip=True))).strip()
+        date_selectors = [
+            'meta[property="article:published_time"]', 'meta[property="og:article:published_time"]',
+            'time[datetime]', '.date-display-single', '.field-name-post-date', '.published'
+        ]
+        for selector in date_selectors:
+            date_element = soup.select_one(selector)
+            if date_element:
+                metadata['date'] = (date_element.get('content', '').strip() if date_element.name == 'meta'
+                                  else date_element.get('datetime', date_element.get_text(strip=True)).strip())
+                if metadata['date']: break
 
-        # Extract tags
-        tag_elements = soup.find_all('meta', property='article:tag') or soup.find_all('a', rel='tag')
-        if tag_elements:
-            metadata['tags'] = [tag.get('content', tag.get_text(strip=True)).strip() for tag in tag_elements]
+        tag_selectors = [
+            'meta[property="article:tag"]', 'a[rel="tag"]', '.tags a',
+            '.field-name-field-tags a', '.post-tags a'
+        ]
+        for selector in tag_selectors:
+            tag_elements = soup.select(selector)
+            if tag_elements:
+                tags = []
+                for tag in tag_elements:
+                    tag_text = (tag.get('content', '').strip() if tag.name == 'meta'
+                                else tag.get_text(strip=True))
+                    if tag_text: tags.append(tag_text)
+                if tags:
+                    metadata['tags'] = tags
+                    break
 
-        if not metadata['tags']:
-            tag_container = soup.find('div', class_='tags') or soup.find('ul', class_='post-tags')
-            if tag_container:
-                tag_links = tag_container.find_all('a')
-                metadata['tags'] = [tag.get_text(strip=True) for tag in tag_links]
+        summary_selectors = [
+            'meta[property="og:description"]', 'meta[name="description"]',
+            '.field-name-body p:first-child', '.post-entry p:first-child',
+            '.entry-content p:first-child'
+        ]
+        for selector in summary_selectors:
+            summary_element = soup.select_one(selector)
+            if summary_element:
+                summary = (summary_element.get('content', '').strip() if summary_element.name == 'meta'
+                           else summary_element.get_text(strip=True))
+                if summary and len(summary) > 50:
+                    metadata['summary'] = summary[:500]
+                    break
 
-        # Extract summary
-        summary_element = (
-            soup.find('meta', property='og:description') or
-            soup.find('meta', attrs={'name': 'description'})
-        )
-        if summary_element:
-            metadata['summary'] = summary_element.get('content', '').strip()
-        else:
-            first_para = None
-            content_div = soup.find('div', class_='post-entry') or soup.find('div', class_='entry-content')
-            if content_div:
-                first_para = content_div.find('p')
-            if first_para:
-                metadata['summary'] = first_para.get_text(strip=True).strip()
-
-        # Extract featured image
-        featured_img = (
-            soup.find('meta', property='og:image') or
-            (soup.find('figure', class_='post-thumbnail') and soup.find('figure', class_='post-thumbnail').find('img')) or
-            (soup.find('div', class_='featured-image') and soup.find('div', class_='featured-image').find('img'))
-        )
-        if featured_img:
-            img_url = featured_img.get('content', featured_img.get('src', ''))
-            img_url = clean_image_url(img_url)
-            if not should_ignore_image_url(img_url) and img_url:
-                metadata['featured_image'] = urljoin(url, img_url)
+        image_selectors = [
+            'meta[property="og:image"]', '.field-name-field-image img',
+            '.post-thumbnail img', '.featured-image img', '.article-image img'
+        ]
+        for selector in image_selectors:
+            img_element = soup.select_one(selector)
+            if img_element:
+                img_url = (img_element.get('content', '') if img_element.name == 'meta'
+                           else img_element.get('src', ''))
+                img_url = clean_image_url(img_url)
+                if img_url and not should_ignore_image_url(img_url):
+                    metadata['featured_image'] = urljoin(url, img_url)
+                    break
     except Exception as e:
         logging.error(f"Error extracting metadata from {url}: {e}", exc_info=True)
-
     return metadata
 
 def manual_extraction_fallback(soup, url):
-    """
-    A fallback extraction method if readability fails.
-    Attempts to extract content directly from common article container elements.
-    """
+    """Fallback extraction method if readability fails."""
     logging.debug(f"Attempting manual extraction fallback for {url}")
     try:
-        title_element = (
-            soup.find('h1', class_='page-header__title') or
-            soup.find('h1', class_='entry-title') or
-            soup.find('h1', itemprop='headline') or
-            soup.find('meta', property='og:title')
-        )
-        title = title_element.get_text(strip=True) if title_element and hasattr(title_element, 'get_text') else title_element.get('content') if title_element else "Untitled Article"
-        content_element = (
-            soup.find('div', class_='post-entry') or
-            soup.find('div', class_='entry-content') or
-            soup.find('article') or
-            soup.find('div', {'id': 'content'}) or
-            soup.find('div', class_='content')
-        )
+        title_selectors = [
+            'h1.page-header__title', 'h1.entry-title', 'h1[itemprop="headline"]',
+            '.article-title h1', '.node-title', 'meta[property="og:title"]', 'title'
+        ]
+        title = "Untitled Article"
+        for selector in title_selectors:
+            title_element = soup.select_one(selector)
+            if title_element:
+                title = (title_element.get('content', '').strip() if title_element.name == 'meta'
+                         else title_element.get_text(strip=True))
+                if title: break
 
-        if content_element:
-            for unwanted in content_element.select('.social-share, .author-box, .related-posts, .comments, script, style'):
-                if unwanted:
-                    unwanted.decompose()
-            elements = content_element.find_all(['p', 'h2', 'h3', 'h4', 'blockquote', 'ul', 'ol', 'figure'])
-            content = "\n\n".join(str(el) for el in elements) if elements else str(content_element)
-        else:
+        content_selectors = [
+            '.field-name-body', '.post-entry', '.entry-content', '.article-content',
+            '.node-content', 'article .content', '.main-content', '#content'
+        ]
+        content = ""
+        for selector in content_selectors:
+            content_element = soup.select_one(selector)
+            if content_element:
+                for unwanted in content_element.select('.social-share, .author-box, .related-posts, .comments, script, style, .advertisement, .ads'):
+                    if unwanted: unwanted.decompose()
+                elements = content_element.select('p, h2, h3, h4, h5, h6, blockquote, ul, ol, figure, img')
+                content = "\n\n".join(str(el) for el in elements) if elements else str(content_element)
+                break
+        if not content and soup.body:
             logging.warning(f"Manual extraction: Content container not found for {url}; using entire body.")
-            content = str(soup.body) if soup.body else ""
-        cleaned_html_fallback = f"<h1>{title}</h1><article>{content}</article>"
-        return title, cleaned_html_fallback
+            for unwanted in soup.body.select('script, style, nav, header, footer, .sidebar, .menu'):
+                if unwanted: unwanted.decompose()
+            content = str(soup.body)
+        
+        return title, f"<h1>{title}</h1><article>{content or '<p>Content extraction failed</p>'}</article>"
     except Exception as e:
         logging.error(f"Manual extraction fallback failed for {url}: {e}", exc_info=True)
         return "Extraction Failed", "<article>Content extraction failed</article>"
 
 def download_image(image_url, retry_count=3):
-    """
-    Downloads an image from a URL and returns it as a bytes object.
-    Includes retry logic and error handling.
-    """
+    """Downloads an image from a URL and returns it as a bytes object."""
     image_url = clean_image_url(image_url)
-    
-    if not image_url or not is_valid_url(image_url):
-        logging.debug(f"Invalid or missing image URL: {image_url}")
-        return None
-        
-    if should_ignore_image_url(image_url):
-        logging.debug(f"Skipping ignored image URL: {image_url}")
+    if not image_url or not is_valid_url(image_url) or should_ignore_image_url(image_url):
         return None
 
     for attempt in range(retry_count):
@@ -381,22 +1135,20 @@ def download_image(image_url, retry_count=3):
             with get_session() as session:
                 response = session.get(image_url, stream=True, timeout=TIMEOUT, verify=VERIFY)
                 response.raise_for_status()
-            return BytesIO(response.content)
-        except requests.exceptions.SSLError as e:
-            logging.warning(f"SSL Error downloading image from {image_url} (attempt {attempt+1}): {e}")
-            if attempt < retry_count - 1:
-                time.sleep(2 ** attempt)
-            else:
-                logging.error(f"Failed all {retry_count} attempts (SSL error) to download image from {image_url}")
-                return None
+                content_type = response.headers.get('content-type', '').lower()
+                if not any(img_type in content_type for img_type in ['image/', 'jpeg', 'png', 'gif', 'webp']):
+                    logging.warning(f"Invalid content type for image: {content_type}")
+                    return None
+                content_length = response.headers.get('content-length')
+                if content_length and int(content_length) > 10 * 1024 * 1024:
+                    logging.warning(f"Image too large: {content_length} bytes")
+                    return None
+                return BytesIO(response.content)
         except requests.exceptions.RequestException as e:
-            logging.warning(f"Failed to download image from {image_url} (attempt {attempt+1}): {e}")
-            if attempt < retry_count - 1:
-                time.sleep(2 ** attempt)
-                continue
-            else:
-                logging.error(f"Failed all {retry_count} attempts to download image from {image_url}")
-                return None
+            logging.warning(f"Failed to download image {image_url} (attempt {attempt+1}): {e}")
+            if attempt < retry_count - 1: time.sleep(2 ** attempt)
+            else: logging.error(f"Failed all {retry_count} attempts to download image {image_url}")
+    return None
 
 def is_small_image(img):
     """Checks if an image is too small to be worth including"""
@@ -404,9 +1156,8 @@ def is_small_image(img):
     return width < 50 or height < 50
 
 def process_image(img_url, url):
-    """Processes an image URL and returns the image data and info if valid"""
+    """Processes an image URL and returns the image data and info if valid."""
     img_url = clean_image_url(img_url)
-    
     if not img_url or should_ignore_image_url(img_url):
         return None, None, None
         
@@ -416,46 +1167,48 @@ def process_image(img_url, url):
         
     try:
         img = Image.open(img_data)
-        
-        # Skip small images
         if is_small_image(img):
             logging.debug(f"Skipping small image ({img.size[0]}x{img.size[1]}): {img_url}")
             return None, None, None
-            
-        img_format = img.format.lower()
-        if img_format not in ['jpeg', 'png', 'gif', 'webp']:
-            logging.warning(f"Unsupported image format: {img_format}. Skipping.")
-            return None, None, None
-            
+        
+        if img.mode in ('RGBA', 'LA', 'P'):
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            if img.mode == 'P': img = img.convert('RGBA')
+            background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+            img = background
+        elif img.mode not in ('RGB', 'L'):
+            img = img.convert('RGB')
+        
+        max_width, max_height = 1200, 1600
+        if img.size[0] > max_width or img.size[1] > max_height:
+            img.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
+        
+        img_buffer = BytesIO()
+        img.save(img_buffer, format='JPEG', quality=85, optimize=True)
+        img_buffer.seek(0)
+        
         hash_object = hashlib.md5(img_url.encode())
-        img_file_name = f'image_{hash_object.hexdigest()[:8]}.{img_format}'
-        img_data.seek(0)
-        return img_data, img_format, img_file_name
+        img_file_name = f'image_{hash_object.hexdigest()[:8]}.jpg'
+        return img_buffer, 'jpeg', img_file_name
     except Exception as e:
         logging.error(f"Error processing image {img_url} in {url}: {e}")
         return None, None, None
 
-def process_article(url, download_images=True, status_callback=None):
-    """
-    Downloads, parses, extracts content, and processes images from an article.
-    Handles both regular images and data URIs.
-    Uses caching if CACHE_DIR is set.
-    """
-    if status_callback:
-        status_callback(f"Processing: {url}")
-        
+def process_article(url, download_images=True, status_callback=None, stop_callback=None):
+    """Downloads, parses, extracts content, and processes images from an article."""
+    if stop_callback and stop_callback(): return None, None, None, []
+    if status_callback: status_callback(f"Processing: {url}")
     logging.debug(f"Processing URL: {url}")
-    image_items = []
-    image_filenames = set()  # Track processed image filenames to avoid duplicates
 
     try:
         html_content = cached_get(url)
     except requests.exceptions.RequestException as e:
         error_msg = f"Failed to fetch {url}: {e}"
         logging.error(error_msg)
-        if status_callback:
-            status_callback(error_msg)
+        if status_callback: status_callback(error_msg)
         return None, None, None, []
+
+    if stop_callback and stop_callback(): return None, None, None, []
 
     soup = BeautifulSoup(html_content, 'html.parser')
     metadata = get_article_metadata(soup, url)
@@ -464,8 +1217,7 @@ def process_article(url, download_images=True, status_callback=None):
         doc = Document(html_content)
         title = doc.short_title() or metadata.get('title', "Untitled")
         cleaned_html = doc.summary()
-        if not cleaned_html or len(cleaned_html) < 200:
-            raise ValueError("Readability returned insufficient content")
+        if not cleaned_html or len(cleaned_html) < 200: raise ValueError("Readability returned insufficient content")
     except Exception as e:
         logging.warning(f"Readability extraction failed for {url}: {e}")
         title, cleaned_html = manual_extraction_fallback(soup, url)
@@ -473,286 +1225,165 @@ def process_article(url, download_images=True, status_callback=None):
     if not title or not cleaned_html:
         error_msg = f"Skipping article due to extraction failure: {url}"
         logging.warning(error_msg)
-        if status_callback:
-            status_callback(error_msg)
+        if status_callback: status_callback(error_msg)
         return None, None, None, []
 
-    if status_callback:
-        status_callback(f"Extracted: {title}")
+    if stop_callback and stop_callback(): return None, None, None, []
+    if status_callback: status_callback(f"Extracted: {title}")
 
-    # Process featured image if available
-    featured_image_processed = False
+    image_items, image_filenames = [], set()
     if download_images and metadata.get('featured_image'):
-        featured_img_url = metadata['featured_image']
-        img_data, img_format, img_file_name = process_image(featured_img_url, url)
-        
+        if stop_callback and stop_callback(): return None, None, None, []
+        img_data, img_format, img_file_name = process_image(metadata['featured_image'], url)
         if img_data and img_format and img_file_name:
-            img_file_name = 'featured_' + img_file_name  # Ensure unique naming for featured images
-            epub_image = epub.EpubImage()
-            epub_image.file_name = 'images/' + img_file_name
-            epub_image.media_type = f'image/{img_format}'
-            epub_image.content = img_data.getvalue()
+            img_file_name = 'featured_' + img_file_name
+            epub_image = epub.EpubImage(file_name='images/' + img_file_name,
+                                      media_type=f'image/{img_format}',
+                                      content=img_data.getvalue())
             image_items.append(epub_image)
             image_filenames.add(img_file_name)
-            
-            featured_image_html = f'<figure class="featured-image"><img src="images/{img_file_name}" alt="{title}" /></figure>'
-            cleaned_html = featured_image_html + cleaned_html
-            featured_image_processed = True
+            cleaned_html = f'<figure class="featured-image"><img src="images/{img_file_name}" alt="{title}" /></figure>' + cleaned_html
 
     cleaned_soup = BeautifulSoup(cleaned_html, 'html.parser')
-
     if download_images:
-        img_count = len(cleaned_soup.find_all('img', src=True))
-        if status_callback and img_count > 0:
-            status_callback(f"Processing {img_count} images...")
+        img_tags = cleaned_soup.find_all('img', src=True)
+        for i, img_tag in enumerate(img_tags):
+            if stop_callback and stop_callback(): break
+            img_url = img_tag.get('src', '')
+            if img_url.startswith('images/'): continue
             
-        for i, img_tag in enumerate(cleaned_soup.find_all('img', src=True)):
-            img_url = img_tag['src']
-            
-            # Skip already processed images (based on src)
-            if img_url.startswith('images/'):
-                continue
-                
-            if not img_url.startswith('data:'):
-                img_url = urljoin(url, img_url)
-                
-            # Process data URIs
             if img_url.startswith('data:'):
                 try:
                     header, encoded = img_url.split(",", 1)
                     img_format = header.split(';')[0].split('/')[1].lower()
-                    if img_format not in ['jpeg', 'png', 'gif', 'webp']:
-                        logging.warning(f"Unsupported image format in data URI ({img_format}). Skipping.")
-                        continue
+                    if img_format not in ['jpeg', 'jpg', 'png', 'gif', 'webp']: continue
                     img_data = BytesIO(base64.b64decode(encoded))
-                    hash_object = hashlib.md5(encoded.encode())
-                    img_file_name = f'image_{hash_object.hexdigest()[:8]}.{img_format}'
-                    
-                    # Skip if this image has already been processed
+                    img_file_name = f'image_{hashlib.md5(encoded.encode()).hexdigest()[:8]}.{img_format}'
                     if img_file_name in image_filenames:
                         img_tag['src'] = 'images/' + img_file_name
                         continue
-                        
-                    epub_image = epub.EpubImage()
-                    epub_image.file_name = 'images/' + img_file_name
-                    epub_image.media_type = f'image/{img_format}'
-                    epub_image.content = img_data.getvalue()
+                    epub_image = epub.EpubImage(file_name='images/' + img_file_name,
+                                              media_type=f'image/{img_format}',
+                                              content=img_data.getvalue())
                     image_items.append(epub_image)
                     image_filenames.add(img_file_name)
                     img_tag['src'] = 'images/' + img_file_name
                 except Exception as e:
                     logging.error(f"Error processing data URI in {url}: {e}")
-                    continue
             else:
-                # Regular image URL
-                img_data, img_format, img_file_name = process_image(img_url, url)
+                full_img_url = urljoin(url, img_url)
+                img_data, img_format, img_file_name = process_image(full_img_url, url)
                 if img_data and img_format and img_file_name:
-                    # Skip if this image has already been processed
                     if img_file_name in image_filenames:
                         img_tag['src'] = 'images/' + img_file_name
                         continue
-                        
-                    epub_image = epub.EpubImage()
-                    epub_image.file_name = 'images/' + img_file_name
-                    epub_image.media_type = f'image/{img_format}'
-                    epub_image.content = img_data.getvalue()
+                    epub_image = epub.EpubImage(file_name='images/' + img_file_name,
+                                              media_type=f'image/{img_format}',
+                                              content=img_data.getvalue())
                     image_items.append(epub_image)
                     image_filenames.add(img_file_name)
                     img_tag['src'] = 'images/' + img_file_name
-            
-            # Clean up unnecessary image attributes
-            for attr in ['data-src', 'data-srcset', 'srcset', 'loading', 'sizes']:
-                if attr in img_tag.attrs:
-                    del img_tag.attrs[attr]
-                    
-            if status_callback and i % 3 == 0:  # Update status every few images
-                status_callback(f"Image {i+1}/{img_count} processed")
+
+            for attr in ['data-src', 'data-srcset', 'srcset', 'loading', 'sizes', 'width', 'height']:
+                if attr in img_tag.attrs: del img_tag.attrs[attr]
 
     header_html = f"<h1>{title}</h1>"
-    if metadata.get('author'):
-        header_html += f"<p class='author'>By {metadata['author']}</p>"
+    if metadata.get('author'): header_html += f"<p class='author'>By {metadata['author']}</p>"
     if metadata.get('date'):
-        formatted_date = metadata['date']
         try:
             parsed_date = parse_date(metadata['date'])
-            if parsed_date != datetime.min:
-                formatted_date = parsed_date.strftime("%B %d, %Y")
+            formatted_date = parsed_date.strftime("%B %d, %Y") if parsed_date != datetime.min else metadata['date']
+            header_html += f"<p class='date'>Published: {formatted_date}</p>"
         except:
-            pass
-        header_html += f"<p class='date'>Date: {formatted_date}</p>"
-    if metadata.get('summary'):
-        header_html += f"<p class='summary'><em>{metadata['summary']}</em></p>"
-    if metadata.get('tags') and metadata['tags']:
-        header_html += f"<p class='tags'>Tags: {', '.join(metadata['tags'])}</p>"
-
-    footer_html = f"<hr/><p class='source'>Source URL: <a href='{url}'>{url}</a></p>"
-    final_html = header_html + str(cleaned_soup) + footer_html
-
+             header_html += f"<p class='date'>Published: {metadata['date']}</p>"
+    if metadata.get('summary'): header_html += f"<div class='summary'><em>{metadata['summary']}</em></div>"
+    if metadata.get('tags'): header_html += f"<p class='tags'>Tags: {', '.join(metadata['tags'])}</p>"
+    footer_html = f"<hr/><p class='source'>Source: <a href='{url}'>{url}</a></p>"
+    
     chapter_filename = sanitize_filename(title) + '.xhtml'
-    chapter = epub.EpubHtml(title=title, file_name=chapter_filename, lang='en')
-    chapter.content = final_html.encode('utf-8')
+    chapter = epub.EpubHtml(title=title, file_name=chapter_filename, lang='en',
+                            content=(header_html + str(cleaned_soup) + footer_html).encode('utf-8'))
     chapter.id = sanitize_filename(title).replace(".", "_")
     
-    if status_callback:
-        status_callback(f"Completed: {title}")
-        
+    if status_callback: status_callback(f"Completed: {title}")
     return title, chapter, metadata, image_items
 
 def create_epub(chapters, save_dir, epub_title, cover_path=None, author="Mises Wire", language='en', status_callback=None):
-    """
-    Create an EPUB file from a list of chapters, including images.
-    """
+    """Create an EPUB file from a list of chapters, including images."""
     if not chapters:
-        error_msg = "No chapters provided to create_epub"
-        logging.error(error_msg)
-        if status_callback:
-            status_callback(error_msg)
+        if status_callback: status_callback("No chapters provided to create EPUB")
         return None
 
-    if status_callback:
-        status_callback(f"Creating EPUB: {epub_title} with {len(chapters)} chapters")
-
+    if status_callback: status_callback(f"Creating EPUB: {epub_title} with {len(chapters)} chapters")
     book = epub.EpubBook()
     book.set_title(epub_title)
     book.add_author(author)
     book.set_language(language)
-
-    book_id = sanitize_filename(epub_title).lower().replace(" ", "_")
-    book.set_identifier(f"mises-{book_id}-{datetime.now().strftime('%Y%m%d')}")
-    book.add_metadata('DC', 'description', 'Collection of articles from Mises Wire')
+    book.set_identifier(f"mises-{sanitize_filename(epub_title).lower()}-{datetime.now().strftime('%Y%m%d')}")
     book.add_metadata('DC', 'publisher', 'Mises Institute')
     book.add_metadata('DC', 'date', datetime.now().strftime('%Y-%m-%d'))
+    book.add_metadata('DC', 'creator', f'{APP_NAME} v{APP_VERSION}')
 
     if cover_path and os.path.exists(cover_path):
         try:
-            with open(cover_path, 'rb') as f:
-                cover_content = f.read()
-            img = Image.open(BytesIO(cover_content))
+            with open(cover_path, 'rb') as f: content = f.read()
+            img = Image.open(BytesIO(content))
+            if img.mode in ('RGBA', 'LA', 'P'):
+                background = Image.new('RGB', img.size, (255, 255, 255))
+                if img.mode == 'P': img = img.convert('RGBA')
+                background.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                img = background
             if img.width > 1600 or img.height > 2400:
-                if status_callback:
-                    status_callback("Resizing cover image...")
-                logging.info("Cover image is large, resizing to more optimal dimensions")
-                img.thumbnail((1600, 2400))
-                img_buffer = BytesIO()
-                img.save(img_buffer, format=img.format)
-                cover_content = img_buffer.getvalue()
-            ext = os.path.splitext(cover_path)[1].lower()
-            if not ext:
-                ext = '.jpg'
-            cover_file_name = f'images/cover{ext}'
-            book.set_cover(cover_file_name, cover_content)
-            logging.info(f"Added cover image: {cover_path}")
+                if status_callback: status_callback("Resizing cover image...")
+                img.thumbnail((1600, 2400), Image.Resampling.LANCZOS)
+                buf = BytesIO()
+                img.save(buf, format='JPEG', quality=90, optimize=True)
+                content = buf.getvalue()
+            book.set_cover("images/cover.jpg", content)
         except Exception as e:
             logging.error(f"Error adding cover image: {e}")
 
     intro_title = "About This Collection"
-    intro_content = f"""
-    <h1>{epub_title}</h1>
-    <p>This is a collection of articles from Mises Wire, the Mises Institute's publication featuring contemporary news, opinion, and analysis.</p>
-    <p>Contains {len(chapters)} articles.</p>
-    <p>Generated on {datetime.now().strftime('%B %d, %Y')}</p>
-    """
-    intro_chapter = epub.EpubHtml(title=intro_title, file_name='intro.xhtml', lang=language)
-    intro_chapter.content = intro_content
+    intro_content = f"""<div style="text-align: center; margin: 2em 0;">
+        <h1>{epub_title}</h1>
+        <p style="font-size: 1.2em; margin: 1em 0;">A curated collection of articles from Mises Wire</p><hr style="width: 50%; margin: 2em auto;"/></div>
+        <div style="margin: 2em 0;"><h2>About Mises Wire</h2><p>Mises Wire is the Mises Institute's publication featuring contemporary news, opinion, and analysis from the Austrian School of economics perspective.</p>
+        <h2>Collection Details</h2><ul><li><strong>Articles:</strong> {len(chapters)}</li><li><strong>Generated:</strong> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</li><li><strong>Generator:</strong> {APP_NAME} v{APP_VERSION}</li></ul>
+        <h2>Reading Notes</h2><p>This collection is organized by publication date, with the most recent articles first. Each article includes the original publication date, author information, and source URL.</p></div>"""
+    intro_chapter = epub.EpubHtml(title=intro_title, file_name='intro.xhtml', content=intro_content, lang=language)
     book.add_item(intro_chapter)
 
     try:
-        if status_callback:
-            status_callback("Sorting chapters by date...")
+        if status_callback: status_callback("Sorting chapters by date...")
         chapters.sort(key=lambda x: parse_date(x[2].get('date', '')), reverse=True)
     except Exception as e:
         logging.warning(f"Failed to sort chapters by date: {e}")
 
-    toc = [epub.Link('intro.xhtml', intro_title, 'intro')]
-    spine = ['nav', intro_chapter]
+    toc, spine = [epub.Link('intro.xhtml', intro_title, 'intro')], ['nav', intro_chapter]
+    image_filenames, all_image_items = set(), []
     
-    # Use a set to track processed image file paths to avoid duplicates
-    image_filenames = set()
-    all_image_items = []
-
-    if status_callback:
-        status_callback("Adding chapters to EPUB...")
-        
+    if status_callback: status_callback("Adding chapters to EPUB...")
     for i, (title, chapter, metadata, image_items) in enumerate(chapters):
         book.add_item(chapter)
         toc.append(epub.Link(chapter.file_name, title, chapter.id))
         spine.append(chapter)
-        
-        # Only add unique images
         for image_item in image_items:
             if image_item.file_name not in image_filenames:
                 all_image_items.append(image_item)
                 image_filenames.add(image_item.file_name)
-                
-        if status_callback and i % 10 == 0:
-            status_callback(f"Added {i+1}/{len(chapters)} chapters...")
+        if status_callback and (i + 1) % 10 == 0: status_callback(f"Added {i+1}/{len(chapters)} chapters...")
 
-    if status_callback:
-        status_callback(f"Adding {len(all_image_items)} images to EPUB...")
-        
-    # Add all unique images to the book
+    if status_callback: status_callback(f"Adding {len(all_image_items)} images to EPUB...")
     for i, image_item in enumerate(all_image_items):
         book.add_item(image_item)
-        if status_callback and i % 20 == 0:
-            status_callback(f"Added {i+1}/{len(all_image_items)} images...")
+        if status_callback and (i + 1) % 20 == 0: status_callback(f"Added {i+1}/{len(all_image_items)} images...")
 
-    book.toc = tuple(toc)
-    book.spine = spine
+    book.toc, book.spine = tuple(toc), spine
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
 
-    css_content = """
-    body {
-        font-family: "Georgia", serif;
-        line-height: 1.5;
-        margin: 2%;
-        padding: 0;
-    }
-    h1 {
-        font-size: 1.5em;
-        margin: 1em 0 0.5em;
-    }
-    h2 {
-        font-size: 1.3em;
-        margin: 1em 0 0.5em;
-    }
-    p {
-        margin: 0.5em 0;
-    }
-    .author, .date, .tags, .summary {
-        font-size: 0.9em;
-        margin: 0.3em 0;
-    }
-    .summary {
-        font-style: italic;
-        margin-bottom: 1em;
-    }
-    img {
-        max-width: 100%;
-        height: auto;
-    }
-    blockquote {
-        margin: 1em 2em;
-        padding-left: 1em;
-        border-left: 4px solid #ccc;
-        font-style: italic;
-    }
-    .source {
-        font-size: 0.8em;
-        color: #666;
-        margin-top: 2em;
-    }
-    .featured-image {
-        margin: 1em 0;
-        text-align: center;
-    }
-    """
-    nav_css = epub.EpubItem(
-        uid="style_nav",
-        file_name="style/nav.css",
-        media_type="text/css",
-        content=css_content
-    )
+    css_content = """@namespace epub "http://www.idpf.org/2007/ops"; body{font-family:"Georgia","Times New Roman",serif;line-height:1.6;margin:0;padding:2%;color:#333;text-align:left}h1{font-size:1.8em;font-weight:700;margin:1.5em 0 1em;color:#2c3e50;border-bottom:2px solid #3498db;padding-bottom:.5em}h2{font-size:1.4em;font-weight:700;margin:1.3em 0 .8em;color:#dddddd}h3{font-size:1.2em;font-weight:700;margin:1.2em 0 .6em;color:#dddddd}p{margin:.8em 0;text-align:justify;text-indent:1.2em}p.author{font-style:italic;color:#7f8c8d;margin:.5em 0;text-indent:0;font-size:.95em}p.date{color:#95a5a6;margin:.3em 0 1em;text-indent:0;font-size:.9em}p.tags{color:#3498db;margin:.5em 0;text-indent:0;font-size:.9em}.summary{background-color:#ecf0f1;border-left:4px solid #3498db;padding:1em;margin:1em 0 2em;font-style:italic;border-radius:0 4px 4px 0}.summary p{margin:0;text-indent:0}img{max-width:100%;height:auto;display:block;margin:1em auto;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,.1)}.featured-image{margin:2em 0;text-align:center}.featured-image img{max-width:90%;box-shadow:0 4px 12px rgba(0,0,0,.15)}blockquote{margin:1.5em 2em;padding:1em;background-color:#f8f9fa;border-left:4px solid #3498db;font-style:italic;border-radius:0 4px 4px 0}blockquote p{margin:.5em 0;text-indent:0}ul,ol{margin:1em 0;padding-left:2em}li{margin:.5em 0}.source{margin-top:3em;padding-top:1em;border-top:1px solid #bdc3c7;font-size:.85em;color:#7f8c8d;text-align:center;text-indent:0}.source a{color:#3498db;text-decoration:none}hr{border:none;height:1px;background-color:#bdc3c7;margin:2em 0}table{width:100%;border-collapse:collapse;margin:1em 0}th,td{border:1px solid #bdc3c7;padding:.5em;text-align:left}th{background-color:#ecf0f1;font-weight:700}code{background-color:#f8f9fa;padding:.2em .4em;border-radius:3px;font-family:"Courier New",monospace;font-size:.9em}pre{background-color:#f8f9fa;padding:1em;border-radius:4px;overflow-x:auto;margin:1em 0}pre code{background-color:transparent;padding:0}@media print{body{font-size:12pt;line-height:1.4}h1{font-size:18pt}h2{font-size:14pt}h3{font-size:12pt}.featured-image img{max-width:100%}}"""
+    nav_css = epub.EpubItem(uid="style_nav", file_name="style/nav.css", media_type="text/css", content=css_content)
     book.add_item(nav_css)
 
     safe_title = sanitize_filename(epub_title)
@@ -760,1070 +1391,971 @@ def create_epub(chapters, save_dir, epub_title, cover_path=None, author="Mises W
     filename = os.path.join(save_dir, safe_title + '.epub')
 
     try:
-        if status_callback:
-            status_callback(f"Writing EPUB file to {filename}...")
+        if status_callback: status_callback(f"Writing EPUB file to {filename}...")
         epub.write_epub(filename, book, {})
         logging.info(f"Saved EPUB: {filename}")
-        if status_callback:
-            status_callback(f"✅ EPUB successfully created: {filename}")
+        if status_callback: status_callback(f"✅ EPUB successfully created: {filename}")
         return filename
     except Exception as e:
         error_msg = f"Failed to write EPUB: {e}"
         logging.error(error_msg, exc_info=True)
-        if status_callback:
-            status_callback(f"❌ {error_msg}")
+        if status_callback: status_callback(f"❌ {error_msg}")
         return None
 
-# --- Worker Threads for GUI ---
+# --- Enhanced Worker Threads for GUI ---
 class ArticleFetchWorker(QThread):
-    """Worker thread to fetch articles in the background"""
     finished = pyqtSignal(list)
-    progress = pyqtSignal(int, int, int)  # page, max_pages, num_articles
+
+    progress = pyqtSignal(int, int, int)
     status = pyqtSignal(str)
     
-    def __init__(self, url, max_pages):
+    def __init__(self, url, max_pages, include_power_market=False, stop_on_no_new_links=True):
         super().__init__()
         self.url = url
         self.max_pages = max_pages
+        self.include_power_market = include_power_market
+        self.stop_on_no_new_links = stop_on_no_new_links
+        self._stop_requested = False
+        
+    def stop(self): self._stop_requested = True
+    def is_stop_requested(self): return self._stop_requested
         
     def run(self):
-        self.status.emit(f"Fetching articles from {self.url}...")
-        links = get_article_links(
-            self.url, 
-            self.max_pages,
-            progress_callback=lambda page, max_pages, num_articles: self.progress.emit(page, max_pages, num_articles)
-        )
-        self.finished.emit(links)
+        try:
+            self.status.emit(f"Fetching articles from {self.url}...")
+            links = get_article_links(
+                self.url, self.max_pages,
+                progress_callback=lambda p, mp, na: self.progress.emit(p, mp, na),
+                stop_callback=self.is_stop_requested,
+                unique_links_check=self.stop_on_no_new_links
+            )
+            if self._stop_requested:
+                self.status.emit("Fetching stopped by user"); self.finished.emit([]); return
+            
+            if self.include_power_market and not self._stop_requested:
+                self.status.emit("Fetching Power Market articles...")
+                pm_links = get_article_links(
+                    "https://mises.org/power-market", min(self.max_pages, 20),
+                    progress_callback=lambda p, mp, na: self.progress.emit(p, mp, na),
+                    stop_callback=self.is_stop_requested,
+                    unique_links_check=self.stop_on_no_new_links
+                )
+                if not self._stop_requested: links = list(set(links) | set(pm_links))
+            
+            self.finished.emit(links if not self._stop_requested else [])
+        except Exception as e:
+            logging.error(f"Error in ArticleFetchWorker: {e}", exc_info=True)
+            self.status.emit(f"Error fetching articles: {str(e)}"); self.finished.emit([])
 
 class ArticleProcessWorker(QThread):
-    """Worker thread to process articles in the background"""
-    progress = pyqtSignal(int, int)  # current, total
-    article_processed = pyqtSignal(tuple)  # (title, chapter, metadata, image_items)
-    article_failed = pyqtSignal(str)  # url
+    progress = pyqtSignal(int, int)
+    article_processed = pyqtSignal(tuple)
+    article_failed = pyqtSignal(str)
     status = pyqtSignal(str)
-    finished = pyqtSignal(list)  # processed chapters
+    finished = pyqtSignal()
+
     
     def __init__(self, urls, download_images, num_threads):
-        super().__init__()
-        self.urls = urls
-        self.download_images = download_images
-        self.num_threads = min(num_threads, len(urls))
-        self.processed_chapters = []
-        self.mutex = QMutex()
+            super().__init__()
+            self.urls = urls
+            self.download_images = download_images
+            self.num_threads = min(num_threads, len(urls))
+            self._stop_requested = False
+
+        
+    def stop(self): self._stop_requested = True
+    def is_stop_requested(self): return self._stop_requested
         
     def process_article_wrapper(self, url):
         """Wrapper to handle thread-safe updating of status"""
+        if self._stop_requested:
+            return None
+            
         result = process_article(
             url, 
             self.download_images,
-            status_callback=lambda status: self.status.emit(status)
+            status_callback=lambda status: self.status.emit(status),
+            stop_callback=self.is_stop_requested
         )
+        
+        if self._stop_requested:
+            return None
+            
         title, chapter, metadata, image_items = result
         
         if title and chapter:
-            # Thread-safe update of processed chapters
-            self.mutex.lock()
-            self.processed_chapters.append((title, chapter, metadata, image_items))
-            self.mutex.unlock()
-            
             # Signal that an article was processed
-            self.article_processed.emit((title, chapter, metadata, image_items))
+            self.article_processed.emit(result)
         else:
             self.article_failed.emit(url)
             
         return result
         
     def run(self):
-        self.status.emit(f"Processing {len(self.urls)} articles with {self.num_threads} threads...")
-        
-        # Setup ThreadPoolExecutor for parallel processing
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_threads) as executor:
-            futures = []
-            for url in self.urls:
-                future = executor.submit(self.process_article_wrapper, url)
-                futures.append(future)
+        try:
+            self.status.emit(f"Processing {len(self.urls)} articles with {self.num_threads} threads...")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.num_threads) as executor:
+                # Use a list to hold future objects for potential cancellation
+                future_list = [executor.submit(self.process_article_wrapper, url) for url in self.urls]
                 
-            # Track progress
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                self.progress.emit(i + 1, len(self.urls))
+                for i, future in enumerate(concurrent.futures.as_completed(future_list)):
+                    if self._stop_requested:
+                        # Cancel any futures that have not yet started running
+                        for f in future_list:
+                            if not f.done():
+                                f.cancel()
+                        break
+                    self.progress.emit(i + 1, len(self.urls))
+            
+            # Corrected logic for emitting the final status message
+            if self._stop_requested:
+                self.status.emit("Processing stopped by user")
+            else:
+                self.status.emit("Processing complete.")
                 
-        self.status.emit(f"Completed processing {len(self.processed_chapters)} articles successfully.")
-        self.finished.emit(self.processed_chapters)
+            self.finished.emit()
+        except Exception as e:
+            logging.error(f"Error in ArticleProcessWorker: {e}", exc_info=True)
+            self.status.emit(f"Error processing articles: {str(e)}")
+            self.finished.emit()
+
 
 class EpubCreationWorker(QThread):
-    """Worker thread to create EPUB files in the background"""
-    progress = pyqtSignal(int, int)  # current, total
+    progress = pyqtSignal(int, int)
     status = pyqtSignal(str)
-    finished = pyqtSignal(list)  # list of generated filenames
+    finished = pyqtSignal(list)
+
+
     
-    def __init__(self, chapters, save_dir, epub_title, cover_path=None, split=None):
+    def __init__(self, chapters, save_dir, epub_title, author, cover_path=None, split=None):
         super().__init__()
         self.chapters = chapters
         self.save_dir = save_dir
         self.epub_title = epub_title
+        self.author = author
         self.cover_path = cover_path
         self.split = split
+        self._stop_requested = False
+        
+    def stop(self): self._stop_requested = True
         
     def run(self):
-        if not self.chapters:
-            self.status.emit("No articles to create EPUB from.")
-            self.finished.emit([])
-            return
-            
-        self.status.emit(f"Creating EPUB with {len(self.chapters)} articles...")
-        
         try:
-            self.chapters.sort(key=lambda x: parse_date(x[2].get('date', '')), reverse=True)
+            if not self.chapters:
+                self.status.emit("No articles to create EPUB from."); self.finished.emit([]); return
+            self.status.emit(f"Creating EPUB with {len(self.chapters)} articles...")
+            
+            generated_files = []
+            if self.split:
+                num_files = self.split
+                total = len(self.chapters)
+                chunk_size = (total + num_files - 1) // num_files
+                for i in range(num_files):
+                    if self._stop_requested: break
+                    start, end = i * chunk_size, min((i + 1) * chunk_size, total)
+                    if start < end:
+                        split_chapters = self.chapters[start:end]
+                        split_title = f"{self.epub_title} - Part {i+1}"
+                        self.status.emit(f"Creating Part {i+1}/{num_files} with {len(split_chapters)} articles...")
+                        filename = create_epub(split_chapters, self.save_dir, split_title, self.cover_path, self.author,
+                                             status_callback=lambda s: self.status.emit(s))
+                        if filename: generated_files.append(filename)
+                        self.progress.emit(i + 1, num_files)
+            else:
+                filename = create_epub(self.chapters, self.save_dir, self.epub_title, self.cover_path, self.author,
+                                     status_callback=lambda s: self.status.emit(s))
+                if filename: generated_files.append(filename)
+                self.progress.emit(1, 1)
+                
+            self.status.emit("EPUB creation stopped by user" if self._stop_requested else
+                             f"EPUB creation complete. Generated {len(generated_files)} files.")
+            self.finished.emit(generated_files)
         except Exception as e:
-            self.status.emit(f"Warning: Could not sort articles by date: {e}")
-        
-        generated_files = []
-        
-        if self.split:
-            num_files = self.split
-            total_articles = len(self.chapters)
-            articles_per_file = (total_articles + num_files - 1) // num_files
-            
-            for i in range(num_files):
-                start_index = i * articles_per_file
-                end_index = min((i + 1) * articles_per_file, total_articles)
-                
-                if start_index < end_index:
-                    split_chapters = self.chapters[start_index:end_index]
-                    split_title = f"{self.epub_title} - Part {i+1}"
-                    
-                    self.status.emit(f"Creating Part {i+1} with {len(split_chapters)} articles...")
-                    
-                    filename = create_epub(
-                        split_chapters, 
-                        self.save_dir, 
-                        split_title, 
-                        self.cover_path,
-                        status_callback=lambda status: self.status.emit(status)
-                    )
-                    
-                    if filename:
-                        generated_files.append(filename)
-                    
-                    self.progress.emit(i + 1, num_files)
-        else:
-            filename = create_epub(
-                self.chapters, 
-                self.save_dir, 
-                self.epub_title, 
-                self.cover_path,
-                status_callback=lambda status: self.status.emit(status)
-            )
-            
-            if filename:
-                generated_files.append(filename)
-                
-            self.progress.emit(1, 1)
-            
-        self.status.emit(f"EPUB creation complete. Generated {len(generated_files)} files.")
-        self.finished.emit(generated_files)
+            logging.error(f"Error in EpubCreationWorker: {e}", exc_info=True)
+            self.status.emit(f"Error creating EPUB: {str(e)}"); self.finished.emit([])
 
-# --- Custom Widgets ---
+# --- Enhanced Custom Widgets ---
 class StatusWidget(QFrame):
-    """Widget to display status messages with auto-scroll"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
-        
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-        
+        layout = QVBoxLayout(self)
+        header_layout = QHBoxLayout()
         self.status_label = QLabel("Ready")
         self.status_label.setWordWrap(True)
-        self.layout.addWidget(self.status_label)
-        
+        self.status_label.setStyleSheet("font-weight: bold; padding: 5px;")
+        header_layout.addWidget(self.status_label)
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems(["All", "Info", "Warning", "Error", "Success"])
+        self.filter_combo.currentTextChanged.connect(self.filter_logs)
+        header_layout.addWidget(QLabel("Filter:"))
+        header_layout.addWidget(self.filter_combo)
+        layout.addLayout(header_layout)
         self.log_display = QTextEdit()
         self.log_display.setReadOnly(True)
-        self.log_display.setMinimumHeight(120)
-        self.layout.addWidget(self.log_display)
-        
+        self.log_display.setMinimumHeight(150)
+        self.log_display.setMaximumHeight(300)
+        layout.addWidget(self.log_display)
+        button_layout = QHBoxLayout()
         self.clear_button = QPushButton("Clear Log")
         self.clear_button.clicked.connect(self.clear_log)
-        self.layout.addWidget(self.clear_button)
+        self.export_button = QPushButton("Export Log")
+        self.export_button.clicked.connect(self.export_log)
+        self.auto_scroll_checkbox = QCheckBox("Auto Scroll")
+        self.auto_scroll_checkbox.setChecked(True)
+        button_layout.addWidget(self.clear_button)
+        button_layout.addWidget(self.export_button)
+        button_layout.addWidget(self.auto_scroll_checkbox)
+        layout.addLayout(button_layout)
+        self.all_log_entries = []
         
     def set_status(self, message):
-        """Update status label"""
         self.status_label.setText(message)
-        self.add_log_message(message)
+        self.add_log_message(message, "info")
         
-    def add_log_message(self, message):
-        """Add message to log with timestamp"""
+    def add_log_message(self, message, level="info"):
         timestamp = datetime.now().strftime("%H:%M:%S")
-        log_entry = f"[{timestamp}] {message}"
-        self.log_display.append(log_entry)
+        log_entry = {'timestamp': timestamp, 'message': message, 'level': level,
+                     'full_text': f"[{timestamp}] [{level.upper()}] {message}"}
+        self.all_log_entries.append(log_entry)
+        if len(self.all_log_entries) > 1000: self.all_log_entries.pop(0)
+        self.refresh_display()
         
-        # Auto-scroll to bottom
-        cursor = self.log_display.textCursor()
-        cursor.movePosition(QTextCursor.End)
-        self.log_display.setTextCursor(cursor)
-        
-    def clear_log(self):
-        """Clear the log display"""
+    def filter_logs(self): self.refresh_display()
+    def refresh_display(self):
+        filter_level = self.filter_combo.currentText().lower()
         self.log_display.clear()
-        self.add_log_message("Log cleared")
+
+        for entry in self.all_log_entries:
+            if filter_level == "all" or entry['level'] == filter_level:
+                # Only apply special colors for non-info levels
+                if entry['level'] == "error":
+                    color = "#e74c3c"  # Red
+                    formatted_text = f'<span style="color: {color};">{entry["full_text"]}</span>'
+                    self.log_display.append(formatted_text)
+                elif entry['level'] == "warning":
+                    color = "#f39c12"  # Orange
+                    formatted_text = f'<span style="color: {color};">{entry["full_text"]}</span>'
+                    self.log_display.append(formatted_text)
+                elif entry['level'] == "success":
+                    color = "#27ae60"  # Green
+                    formatted_text = f'<span style="color: {color};">{entry["full_text"]}</span>'
+                    self.log_display.append(formatted_text)
+                else:
+                    # For "info" and other levels, append plain text.
+                    # This allows the main stylesheet to control the color (e.g., black for light mode).
+                    self.log_display.append(entry["full_text"])
+        
+        if self.auto_scroll_checkbox.isChecked():
+            # Scroll to the bottom
+            self.log_display.verticalScrollBar().setValue(self.log_display.verticalScrollBar().maximum())
+            
+    def clear_log(self):
+        self.all_log_entries = []
+        self.log_display.clear()
+        self.add_log_message("Log cleared", "info")
+        
+    def export_log(self):
+        try:
+            filename, _ = QFileDialog.getSaveFileName(self, "Export Log",
+                f"mises_epub_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt", "Text Files (*.txt)")
+            if filename:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(f"Mises Wire EPUB Generator Log - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n" + "="*50 + "\n\n")
+                    for entry in self.all_log_entries: f.write(entry['full_text'] + '\n')
+                self.add_log_message(f"Log exported to {filename}", "success")
+        except Exception as e:
+            self.add_log_message(f"Failed to export log: {e}", "error")
 
 class ArticleListWidget(QFrame):
-    """Widget to display and manage the list of articles"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.StyledPanel)
-        
-        self.layout = QVBoxLayout()
-        self.setLayout(self.layout)
-        
-        # Header with count
+        layout = QVBoxLayout(self)
         self.header_layout = QHBoxLayout()
         self.count_label = QLabel("0 articles")
+        self.count_label.setStyleSheet("font-weight: bold;")
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search articles...")
+        self.search_input.textChanged.connect(self.filter_articles)
         self.header_layout.addWidget(self.count_label)
-        
-        self.clear_button = QPushButton("Clear All")
-        self.clear_button.clicked.connect(self.clear_articles)
-        self.header_layout.addWidget(self.clear_button)
-        
-        self.layout.addLayout(self.header_layout)
-        
-        # Article list
+        self.header_layout.addStretch()
+        self.header_layout.addWidget(self.search_input)
+        layout.addLayout(self.header_layout)
         self.article_list = QListWidget()
         self.article_list.setSelectionMode(QListWidget.ExtendedSelection)
-        self.layout.addWidget(self.article_list)
-        
-        # Actions
-        self.actions_layout = QHBoxLayout()
-        
+        self.article_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.article_list.customContextMenuRequested.connect(self.show_context_menu)
+        layout.addWidget(self.article_list)
+        self.actions_layout = QGridLayout()
+        self.select_all_button = QPushButton("Select All")
+        self.select_all_button.clicked.connect(self.article_list.selectAll)
+        self.select_none_button = QPushButton("Select None")
+        self.select_none_button.clicked.connect(self.article_list.clearSelection)
         self.remove_selected_button = QPushButton("Remove Selected")
         self.remove_selected_button.clicked.connect(self.remove_selected)
-        self.actions_layout.addWidget(self.remove_selected_button)
+        self.clear_button = QPushButton("Clear All")
+        self.clear_button.clicked.connect(self.clear_articles)
+        self.actions_layout.addWidget(self.select_all_button, 0, 0)
+        self.actions_layout.addWidget(self.select_none_button, 0, 1)
+        self.actions_layout.addWidget(self.remove_selected_button, 1, 0)
+        self.actions_layout.addWidget(self.clear_button, 1, 1)
+        layout.addLayout(self.actions_layout)
+        self.articles = {}  # {url: (title, metadata, status)}
         
-        self.select_all_button = QPushButton("Select All")
-        self.select_all_button.clicked.connect(self.select_all)
-        self.actions_layout.addWidget(self.select_all_button)
-        
-        self.layout.addLayout(self.actions_layout)
-        
-        # Internal data
-        self.articles = []  # [(url, title, metadata), ...]
-        
-    def add_article(self, url, title=None, metadata=None):
-        """Add an article to the list"""
-        # Don't add duplicates
-        for existing_url, _, _ in self.articles:
-            if existing_url == url:
-                return
-                
-        if not title:
-            title = url.split('/')[-1].replace('-', ' ').title()
-            
-        self.articles.append((url, title, metadata))
-        
-        item = QListWidgetItem(f"{title}")
-        item.setToolTip(url)
-        self.article_list.addItem(item)
-        
-        self.update_count()
+    def add_article(self, url, title=None, metadata=None, status="pending"):
+        if url in self.articles: return False
+        self.articles[url] = (title or self.extract_title_from_url(url), metadata, status)
+        self.filter_articles()
+        return True
         
     def add_articles(self, urls):
-        """Add multiple article URLs at once"""
-        for url in urls:
-            self.add_article(url)
-            
+        added = sum(1 for url in urls if self.add_article(url))
+        return added
+        
+    def update_article_status(self, url, status, title=None):
+        if url in self.articles:
+            old_title, old_metadata, _ = self.articles[url]
+            self.articles[url] = (title or old_title, old_metadata, status)
+            self.filter_articles()
+        
     def clear_articles(self):
-        """Clear all articles from the list"""
-        self.articles = []
-        self.article_list.clear()
-        self.update_count()
+        if self.articles and QMessageBox.question(self, "Confirm Clear",
+            "Are you sure you want to clear all articles?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            self.articles.clear()
+            self.filter_articles()
         
     def remove_selected(self):
-        """Remove selected articles from the list"""
         selected_items = self.article_list.selectedItems()
-        for item in selected_items:
-            row = self.article_list.row(item)
-            self.article_list.takeItem(row)
-            del self.articles[row]
+        if not selected_items: return
+        if QMessageBox.question(self, "Confirm Removal",
+            f"Remove {len(selected_items)} selected article(s)?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            urls_to_remove = {item.data(Qt.UserRole) for item in selected_items}
+            self.articles = {url: data for url, data in self.articles.items() if url not in urls_to_remove}
+            self.filter_articles()
+        
+    def filter_articles(self):
+        search_text = self.search_input.text().lower()
+        self.article_list.clear()
+        filtered_count = 0
+        sorted_articles = sorted(self.articles.items(), key=lambda item: item[1][0]) # Sort by title
+        for url, (title, metadata, status) in sorted_articles:
+            if search_text in title.lower() or search_text in url.lower() or search_text in status.lower():
+                item = QListWidgetItem()
+                status_color = {"pending": "#f39c12", "processing": "#3498db", "completed": "#27ae60",
+                                "failed": "#e74c3c"}.get(status, "#95a5a6")
+                item.setText(f"[{status.upper()}] {title}")
+                item.setToolTip(f"URL: {url}\nStatus: {status}")
+                item.setData(Qt.UserRole, url)
+                item.setForeground(QColor(status_color))
+                self.article_list.addItem(item)
+                filtered_count += 1
+        self.update_count(filtered_count)
+        
+    def update_count(self, filtered_count):
+        total = len(self.articles)
+        self.count_label.setText(f"{total} article{'s' if total != 1 else ''}" if filtered_count == total
+                                 else f"{filtered_count}/{total} article{'s' if total != 1 else ''}")
+        
+    def get_urls(self): return list(self.articles.keys())
+    def get_selected_urls(self): return [item.data(Qt.UserRole) for item in self.article_list.selectedItems()]
+        
+    def extract_title_from_url(self, url):
+        try:
+            from urllib.parse import unquote
+            path = unquote(url.split('/')[-1])
+            return ' '.join(word.capitalize() for word in path.replace('-', ' ').replace('_', ' ').split())[:100]
+        except: return "Unknown Article"
             
-        self.update_count()
-        
-    def select_all(self):
-        """Select all articles in the list"""
-        self.article_list.selectAll()
-        
-    def update_count(self):
-        """Update the count label"""
-        count = len(self.articles)
-        self.count_label.setText(f"{count} article{'s' if count != 1 else ''}")
-        
-    def get_urls(self):
-        """Get all article URLs"""
-        return [url for url, _, _ in self.articles]
-        
-    def update_article_metadata(self, title, metadata):
-        """Update metadata for an article by title"""
-        for i, (url, t, _) in enumerate(self.articles):
-            if t == title:
-                self.articles[i] = (url, title, metadata)
-                break
+    def show_context_menu(self, position):
+        item = self.article_list.itemAt(position)
+        if not item: return
+        menu = QMenu(self)
+        open_url_action = menu.addAction("Open URL in Browser")
+        copy_url_action = menu.addAction("Copy URL")
+        copy_title_action = menu.addAction("Copy Title")
+        menu.addSeparator()
+        remove_action = menu.addAction("Remove Article")
+        action = menu.exec_(self.article_list.mapToGlobal(position))
+        url = item.data(Qt.UserRole)
+        if action == open_url_action and url: QDesktopServices.openUrl(QUrl(url))
+        elif action == copy_url_action and url: QApplication.clipboard().setText(url)
+        elif action == copy_title_action: QApplication.clipboard().setText(item.text().split('] ', 1)[-1])
+        elif action == remove_action and url:
+            self.articles.pop(url, None)
+            self.filter_articles()
 
-# --- Main Application ---
-class MisesWireApp(QMainWindow):
-    """Main application window for the Mises Wire EPUB Generator"""
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Mises Wire EPUB Generator")
-        self.setMinimumSize(900, 700)
+class CoverPreviewWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setMinimumSize(200, 300)
+        self.setMaximumSize(300, 400)
+        layout = QVBoxLayout(self)
+        self.preview_label = QLabel()
+        self.preview_label.setAlignment(Qt.AlignCenter)
+        self.preview_label.setMinimumHeight(250)
+        self.browse_button = QPushButton("Browse for Cover Image")
+        self.browse_button.clicked.connect(self.browse_image)
+        self.clear_button = QPushButton("Clear Cover")
+        self.clear_button.clicked.connect(self.clear_image)
+        layout.addWidget(self.preview_label)
+        layout.addWidget(self.browse_button)
+        layout.addWidget(self.clear_button)
+        self.current_image_path = None
+        self.clear_image()
+            
+    def browse_image(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Cover Image", "",
+            "Image Files (*.jpg *.jpeg *.png *.bmp *.gif)")
+        if file_path: self.set_image(file_path)
+            
+    def set_image(self, file_path):
+        try:
+            pixmap = QPixmap(file_path)
+            if pixmap.isNull(): raise ValueError("Invalid image file")
+            self.preview_label.setPixmap(pixmap.scaled(self.preview_label.size(),
+                Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            self.preview_label.setText("")
+            self.current_image_path = file_path
+            self.clear_button.setEnabled(True)
+            self.preview_label.setStyleSheet("border: 2px solid #3498db; border-radius: 8px; background-color: #ffffff;")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to load image: {e}")
+            
+    def clear_image(self):
+        self.preview_label.setPixmap(QPixmap())
+        self.preview_label.setText("Drop cover image here\nor click to browse")
+        self.current_image_path = None
+        self.clear_button.setEnabled(False)
+        self.preview_label.setStyleSheet("border: 2px dashed #cccccc; border-radius: 8px; color: #666666;")
         
-        # Setup UI
-        self.setup_ui()
+    def get_image_path(self): return self.current_image_path
         
-        # Restore settings
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            if len(urls) == 1 and urls[0].isLocalFile():
+                fp = urls[0].toLocalFile()
+                if any(fp.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.gif']):
+                    event.acceptProposedAction()
+                    
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls(): self.set_image(event.mimeData().urls()[0].toLocalFile())
+
+class AdvancedSettingsDialog(QDialog):
+    def __init__(self, settings, parent=None):
+        super().__init__(parent)
+        self.settings = settings
+        self.setWindowTitle("Advanced Settings")
+        self.setMinimumSize(500, 400)
+        layout = QVBoxLayout(self)
+        self.tab_widget = QTabWidget()
+        layout.addWidget(self.tab_widget)
+        self.setup_network_tab()
+        self.setup_processing_tab()
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Reset)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        buttons.button(QDialogButtonBox.Reset).clicked.connect(self.reset_to_defaults)
+        layout.addWidget(buttons)
         self.load_settings()
         
-        # Initialize data
-        self.processed_chapters = []  # Will hold processed article data
-        self.current_worker = None  # Current background worker
+    def setup_network_tab(self):
+        tab, layout = QWidget(), QFormLayout()
+        tab.setLayout(layout)
+        self.timeout_spinbox = QSpinBox()
+        self.timeout_spinbox.setRange(5, 300); self.timeout_spinbox.setSuffix(" s")
+        layout.addRow("Request Timeout:", self.timeout_spinbox)
+        self.use_proxy_checkbox = QCheckBox("Use Proxy")
+        layout.addRow(self.use_proxy_checkbox)
+        self.proxy_input = QLineEdit(); self.proxy_input.setPlaceholderText("http://proxy:port")
+        layout.addRow("Proxy URL:", self.proxy_input)
+        self.verify_ssl_checkbox = QCheckBox("Verify SSL Certificates")
+        layout.addRow(self.verify_ssl_checkbox)
+        self.tab_widget.addTab(tab, "Network")
+        
+    def setup_processing_tab(self):
+        tab, layout = QWidget(), QFormLayout()
+        tab.setLayout(layout)
+        self.enable_cache_checkbox = QCheckBox("Enable Caching")
+        layout.addRow(self.enable_cache_checkbox)
+        cache_layout = QHBoxLayout()
+        self.cache_dir_input = QLineEdit()
+        cache_browse_button = QPushButton("Browse...")
+        cache_browse_button.clicked.connect(self.browse_cache_dir)
+        cache_layout.addWidget(self.cache_dir_input)
+        cache_layout.addWidget(cache_browse_button)
+        layout.addRow("Cache Directory:", cache_layout)
+        self.log_level_combo = QComboBox()
+        self.log_level_combo.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
+        layout.addRow("Log Level:", self.log_level_combo)
+        self.tab_widget.addTab(tab, "Processing & Cache")
+
+    def browse_cache_dir(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Cache Directory")
+        if directory: self.cache_dir_input.setText(directory)
+            
+    def load_settings(self):
+        self.timeout_spinbox.setValue(self.settings.value("advanced/timeout", 30, type=int))
+        self.use_proxy_checkbox.setChecked(self.settings.value("advanced/use_proxy", False, type=bool))
+        self.proxy_input.setText(self.settings.value("advanced/proxy_url", "", type=str))
+        self.verify_ssl_checkbox.setChecked(self.settings.value("advanced/verify_ssl", True, type=bool))
+        self.enable_cache_checkbox.setChecked(self.settings.value("advanced/enable_cache", False, type=bool))
+        self.cache_dir_input.setText(self.settings.value("advanced/cache_dir",
+            os.path.join(QStandardPaths.writableLocation(QStandardPaths.CacheLocation), "html_cache"), type=str))
+        self.log_level_combo.setCurrentText(self.settings.value("advanced/log_level", "INFO", type=str))
+
+    def save_settings(self):
+        self.settings.setValue("advanced/timeout", self.timeout_spinbox.value())
+        self.settings.setValue("advanced/use_proxy", self.use_proxy_checkbox.isChecked())
+        self.settings.setValue("advanced/proxy_url", self.proxy_input.text())
+        self.settings.setValue("advanced/verify_ssl", self.verify_ssl_checkbox.isChecked())
+        self.settings.setValue("advanced/enable_cache", self.enable_cache_checkbox.isChecked())
+        self.settings.setValue("advanced/cache_dir", self.cache_dir_input.text())
+        self.settings.setValue("advanced/log_level", self.log_level_combo.currentText())
+        
+    def reset_to_defaults(self):
+        if QMessageBox.question(self, "Reset Settings", "Reset all settings to defaults?",
+            QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
+            for key in self.settings.allKeys():
+                if key.startswith("advanced/"): self.settings.remove(key)
+            self.load_settings()
+            
+    def accept(self): self.save_settings(); super().accept()
+
+# --- Enhanced Main Application ---
+class MisesWireApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
+        self.setMinimumSize(1200, 800)
+        self.setWindowIcon(QIcon(self.style().standardPixmap(QStyle.SP_FileIcon)))
+        self.settings = QSettings()
+        self.processed_chapters, self.current_worker = [], None
+        self.is_dark_theme = self.settings.value("ui/dark_theme", False, type=bool)
+        self.setup_ui()
+        self.setup_menu_bar()
+        self.setup_tool_bar()
+        self.setup_status_bar()
+        self.load_settings()
+        self.apply_theme()
+        self.setup_signal_connections()
         
     def setup_ui(self):
-        """Setup the main user interface"""
-        # Main widget and layout
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        self.main_layout = QVBoxLayout()
-        self.central_widget.setLayout(self.main_layout)
+        self.main_layout = QVBoxLayout(self.central_widget)
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_layout.addWidget(self.main_splitter)
+        self.setup_left_panel()
+        self.setup_right_panel()
+        self.main_splitter.setSizes([450, 750])
         
-        # Create tab widget for different functions
+    def setup_left_panel(self):
         self.tab_widget = QTabWidget()
-        self.main_layout.addWidget(self.tab_widget)
-        
-        # Create tabs
+        self.main_splitter.addWidget(self.tab_widget)
         self.setup_source_tab()
         self.setup_processing_tab()
         self.setup_export_tab()
-        self.setup_settings_tab()
         
-        # Status area at bottom
+    def setup_right_panel(self):
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        self.article_list_widget = ArticleListWidget()
         self.status_widget = StatusWidget()
-        self.main_layout.addWidget(self.status_widget)
-        
-        # Initial status message
-        self.status_widget.set_status("Ready to fetch articles from Mises Wire.")
+        right_layout.addWidget(self.article_list_widget)
+        right_layout.addWidget(self.status_widget)
+        self.main_splitter.addWidget(right_widget)
         
     def setup_source_tab(self):
-        """Setup the Source tab for fetching articles"""
-        source_tab = QWidget()
-        layout = QVBoxLayout()
-        source_tab.setLayout(layout)
-        
-        # Source options
-        source_group = QGroupBox("Article Source")
-        source_layout = QFormLayout()
-        source_group.setLayout(source_layout)
-        
-        # Add source types
+        tab, layout = QWidget(), QVBoxLayout()
+        tab.setLayout(layout)
+        source_group = QGroupBox("📚 Article Source Configuration")
+        source_layout = QFormLayout(source_group)
         self.source_type_group = QButtonGroup()
-        
-        self.source_index_radio = QRadioButton("Fetch from Index")
-        self.source_index_radio.setChecked(True)
-        self.source_type_group.addButton(self.source_index_radio)
-        source_layout.addRow(self.source_index_radio, QWidget())
-        
-        # Index URL input
-        self.index_url_layout = QHBoxLayout()
-        self.index_url_input = QLineEdit("https://mises.org/wire")
-        self.index_url_input.setPlaceholderText("https://mises.org/wire")
-        self.index_url_layout.addWidget(self.index_url_input)
-        
-        self.include_power_market = QCheckBox("Include Power Market")
-        self.index_url_layout.addWidget(self.include_power_market)
-        
-        source_layout.addRow("Index URL:", self.index_url_layout)
-        
-        # Pages to fetch
-        self.pages_spinbox = QSpinBox()
-        self.pages_spinbox.setRange(1, 1000)
-        self.pages_spinbox.setValue(50)
-        source_layout.addRow("Pages to fetch:", self.pages_spinbox)
-        
-        # Specific URL radio
-        self.source_url_radio = QRadioButton("Specific Article URL")
-        self.source_type_group.addButton(self.source_url_radio)
-        source_layout.addRow(self.source_url_radio, QWidget())
-        
-        # Specific URL input
-        self.specific_url_input = QLineEdit()
-        self.specific_url_input.setPlaceholderText("https://mises.org/wire/article-title")
-        source_layout.addRow("Article URL:", self.specific_url_input)
-        
-        # Custom list radio
+        self.source_index_radio = QRadioButton("Fetch from Index Pages"); self.source_index_radio.setChecked(True)
+        self.source_url_radio = QRadioButton("Single Article URL")
         self.source_list_radio = QRadioButton("Custom List of URLs")
-        self.source_type_group.addButton(self.source_list_radio)
-        source_layout.addRow(self.source_list_radio, QWidget())
+        self.source_type_group.addButton(self.source_index_radio, 0)
+        self.source_type_group.addButton(self.source_url_radio, 1)
+        self.source_type_group.addButton(self.source_list_radio, 2)
         
-        # Add to layout
+        url_layout = QHBoxLayout(); self.index_url_input = QLineEdit("https://mises.org/wire")
+        self.url_presets_combo = QComboBox(); self.url_presets_combo.addItems(["Mises Wire", "Power Market"])
+        url_layout.addWidget(self.index_url_input); url_layout.addWidget(self.url_presets_combo)
+        source_layout.addRow(self.source_index_radio, url_layout)
+        
+        page_layout = QHBoxLayout(); self.pages_spinbox = QSpinBox(); self.pages_spinbox.setRange(1, 9999); self.pages_spinbox.setValue(50)
+        self.pages_slider = QSlider(Qt.Horizontal); self.pages_slider.setRange(1, 200); self.pages_slider.setValue(50)
+        page_layout.addWidget(self.pages_spinbox); page_layout.addWidget(self.pages_slider)
+        source_layout.addRow("Max Pages:", page_layout)
+
+        options_layout = QVBoxLayout(); self.include_power_market = QCheckBox("Include Power Market articles")
+        self.stop_on_no_new_links = QCheckBox("Stop when no new unique links found"); self.stop_on_no_new_links.setChecked(True)
+        options_layout.addWidget(self.include_power_market); options_layout.addWidget(self.stop_on_no_new_links)
+        source_layout.addRow("Options:", options_layout)
+
+        self.specific_url_input = QLineEdit(); self.specific_url_input.setPlaceholderText("https://mises.org/wire/article-title")
+        source_layout.addRow(self.source_url_radio, self.specific_url_input)
+        
+        self.url_list_text = QTextEdit(); self.url_list_text.setPlaceholderText("Enter URLs, one per line..."); self.url_list_text.setMaximumHeight(100)
+        source_layout.addRow(self.source_list_radio, self.url_list_text)
+
         layout.addWidget(source_group)
-        
-        # Article list
-        self.article_list_widget = ArticleListWidget()
-        layout.addWidget(self.article_list_widget)
-        
-        # Action buttons
-        button_layout = QHBoxLayout()
-        
-        self.fetch_button = QPushButton("Fetch Articles")
-        self.fetch_button.clicked.connect(self.fetch_articles)
-        button_layout.addWidget(self.fetch_button)
-        
-        self.add_url_button = QPushButton("Add URL")
-        self.add_url_button.clicked.connect(self.add_specific_url)
-        button_layout.addWidget(self.add_url_button)
-        
+        button_layout = QHBoxLayout(); self.fetch_button = QPushButton("🔍 Fetch Articles")
+        self.stop_button = QPushButton("⏹️ Stop"); self.stop_button.setVisible(False)
+        self.add_url_button = QPushButton("➕ Add URL")
+        button_layout.addWidget(self.fetch_button); button_layout.addWidget(self.stop_button); button_layout.addWidget(self.add_url_button)
         layout.addLayout(button_layout)
         
-        # Progress bar
-        self.fetch_progress = QProgressBar()
-        self.fetch_progress.setRange(0, 100)
-        self.fetch_progress.setValue(0)
-        self.fetch_progress.setVisible(False)
-        layout.addWidget(self.fetch_progress)
-        
-        # Add the tab
-        self.tab_widget.addTab(source_tab, "Source")
+        self.fetch_progress = QProgressBar(); self.fetch_progress.setVisible(False)
+        self.fetch_status_label = QLabel(""); self.fetch_status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.fetch_progress); layout.addWidget(self.fetch_status_label)
+        layout.addStretch()
+        self.tab_widget.addTab(tab, "📚 Source")
         
     def setup_processing_tab(self):
-        """Setup the Processing tab for downloading and processing articles"""
-        processing_tab = QWidget()
-        layout = QVBoxLayout()
-        processing_tab.setLayout(layout)
+        tab, layout = QWidget(), QVBoxLayout()
+        tab.setLayout(layout)
+        options_group = QGroupBox("⚙️ Processing Configuration")
+        options_layout = QFormLayout(options_group)
+        self.download_images_checkbox = QCheckBox("Download and embed images"); self.download_images_checkbox.setChecked(True)
+        options_layout.addRow("Images:", self.download_images_checkbox)
         
-        # Processing options
-        options_group = QGroupBox("Processing Options")
-        options_layout = QFormLayout()
-        options_group.setLayout(options_layout)
-        
-        # Download images checkbox
-        self.download_images_checkbox = QCheckBox("Download Images")
-        self.download_images_checkbox.setChecked(True)
-        options_layout.addRow(self.download_images_checkbox, QWidget())
-        
-        # Threads for processing
-        self.threads_spinbox = QSpinBox()
-        self.threads_spinbox.setRange(1, 20)
-        self.threads_spinbox.setValue(5)
-        options_layout.addRow("Processing Threads:", self.threads_spinbox)
-        
-        # Cache options
-        cache_layout = QHBoxLayout()
-        self.use_cache_checkbox = QCheckBox("Use Cache")
-        self.use_cache_checkbox.setChecked(False)
-        cache_layout.addWidget(self.use_cache_checkbox)
-        
-        self.cache_dir_input = QLineEdit()
-        self.cache_dir_input.setPlaceholderText("Cache Directory (optional)")
-        cache_layout.addWidget(self.cache_dir_input)
-        
-        self.browse_cache_button = QPushButton("Browse...")
-        self.browse_cache_button.clicked.connect(self.browse_cache_dir)
-        cache_layout.addWidget(self.browse_cache_button)
-        
-        options_layout.addRow("Cache:", cache_layout)
-        
+        threads_layout = QHBoxLayout(); self.threads_spinbox = QSpinBox(); self.threads_spinbox.setRange(1, 32); self.threads_spinbox.setValue(5)
+        self.threads_slider = QSlider(Qt.Horizontal); self.threads_slider.setRange(1, 32); self.threads_slider.setValue(5)
+        threads_layout.addWidget(self.threads_spinbox); threads_layout.addWidget(self.threads_slider)
+        options_layout.addRow("Processing Threads:", threads_layout)
         layout.addWidget(options_group)
         
-        # Action buttons
-        button_layout = QHBoxLayout()
+        self.process_button = QPushButton("🚀 Process Articles"); self.process_button.setEnabled(False)
+        layout.addWidget(self.process_button)
+        self.process_progress = QProgressBar(); self.process_progress.setVisible(False)
+        self.process_status_label = QLabel(""); self.process_status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.process_progress); layout.addWidget(self.process_status_label)
         
-        self.process_button = QPushButton("Process Articles")
-        self.process_button.clicked.connect(self.process_articles)
-        button_layout.addWidget(self.process_button)
-        
-        layout.addLayout(button_layout)
-        
-        # Progress indicators
-        self.process_progress = QProgressBar()
-        self.process_progress.setRange(0, 100)
-        self.process_progress.setValue(0)
-        self.process_progress.setVisible(False)
-        layout.addWidget(self.process_progress)
-        
-        # Processed articles display
-        self.processed_count_label = QLabel("0 articles processed")
-        layout.addWidget(self.processed_count_label)
-        
-        self.processed_list = QListWidget()
-        layout.addWidget(self.processed_list)
-        
-        # Add the tab
-        self.tab_widget.addTab(processing_tab, "Processing")
+        stats_group = QGroupBox("📊 Processing Statistics")
+        stats_layout = QGridLayout(stats_group)
+        self.stats_labels = {'total': QLabel("0"), 'processed': QLabel("0"), 'failed': QLabel("0"), 'images': QLabel("0")}
+        stats_layout.addWidget(QLabel("Total Queued:"), 0, 0); stats_layout.addWidget(self.stats_labels['total'], 0, 1)
+        stats_layout.addWidget(QLabel("Processed:"), 1, 0); stats_layout.addWidget(self.stats_labels['processed'], 1, 1)
+        stats_layout.addWidget(QLabel("Failed:"), 2, 0); stats_layout.addWidget(self.stats_labels['failed'], 2, 1)
+        layout.addWidget(stats_group)
+        layout.addStretch()
+        self.tab_widget.addTab(tab, "⚙️ Processing")
         
     def setup_export_tab(self):
-        """Setup the Export tab for creating EPUB files"""
-        export_tab = QWidget()
-        layout = QVBoxLayout()
-        export_tab.setLayout(layout)
-        
-        # EPUB options
-        epub_group = QGroupBox("EPUB Options")
-        epub_layout = QFormLayout()
-        epub_group.setLayout(epub_layout)
-        
-        # EPUB title
-        self.epub_title_input = QLineEdit("Mises Wire Collection")
-        epub_layout.addRow("EPUB Title:", self.epub_title_input)
-        
-        # Output directory
-        output_layout = QHBoxLayout()
-        self.output_dir_input = QLineEdit("./mises_epub")
-        output_layout.addWidget(self.output_dir_input)
-        
-        self.browse_output_button = QPushButton("Browse...")
-        self.browse_output_button.clicked.connect(self.browse_output_dir)
-        output_layout.addWidget(self.browse_output_button)
-        
-        epub_layout.addRow("Output Directory:", output_layout)
-        
-        # Cover image
-        cover_layout = QHBoxLayout()
-        self.cover_path_input = QLineEdit()
-        self.cover_path_input.setPlaceholderText("Cover Image Path (optional)")
-        cover_layout.addWidget(self.cover_path_input)
-        
-        self.browse_cover_button = QPushButton("Browse...")
-        self.browse_cover_button.clicked.connect(self.browse_cover_image)
-        cover_layout.addWidget(self.browse_cover_button)
-        
-        epub_layout.addRow("Cover Image:", cover_layout)
-        
-        # Split options
-        split_layout = QHBoxLayout()
-        self.use_split_checkbox = QCheckBox("Split into multiple EPUBs")
-        split_layout.addWidget(self.use_split_checkbox)
-        
-        self.split_spinbox = QSpinBox()
-        self.split_spinbox.setRange(2, 100)
-        self.split_spinbox.setValue(5)
-        split_layout.addWidget(self.split_spinbox)
-        
-        split_layout.addWidget(QLabel("files"))
-        
-        epub_layout.addRow("Split:", split_layout)
-        
-        layout.addWidget(epub_group)
-        
-        # Action buttons
-        button_layout = QHBoxLayout()
-        
-        self.create_epub_button = QPushButton("Create EPUB")
-        self.create_epub_button.clicked.connect(self.create_epub_files)
-        button_layout.addWidget(self.create_epub_button)
-        
-        self.open_output_button = QPushButton("Open Output Directory")
-        self.open_output_button.clicked.connect(self.open_output_directory)
-        button_layout.addWidget(self.open_output_button)
-        
-        layout.addLayout(button_layout)
-        
-        # Progress indicators
-        self.export_progress = QProgressBar()
-        self.export_progress.setRange(0, 100)
-        self.export_progress.setValue(0)
-        self.export_progress.setVisible(False)
-        layout.addWidget(self.export_progress)
-        
-        # Results display
-        self.results_group = QGroupBox("Created EPUB Files")
-        results_layout = QVBoxLayout()
-        self.results_group.setLayout(results_layout)
-        
-        self.results_list = QListWidget()
-        self.results_list.itemDoubleClicked.connect(self.open_epub_file)
-        results_layout.addWidget(self.results_list)
-        
-        layout.addWidget(self.results_group)
-        
-        # Add the tab
-        self.tab_widget.addTab(export_tab, "Export")
-        
-    def setup_settings_tab(self):
-        """Setup the Settings tab for configuring the application"""
-        settings_tab = QWidget()
-        layout = QVBoxLayout()
-        settings_tab.setLayout(layout)
-        
-        # Network settings
-        network_group = QGroupBox("Network Settings")
-        network_layout = QFormLayout()
-        network_group.setLayout(network_layout)
-        
-        # Timeout
-        self.timeout_spinbox = QSpinBox()
-        self.timeout_spinbox.setRange(5, 300)
-        self.timeout_spinbox.setValue(30)
-        self.timeout_spinbox.setSuffix(" seconds")
-        network_layout.addRow("Request Timeout:", self.timeout_spinbox)
-        
-        # Proxy
-        proxy_layout = QHBoxLayout()
-        self.use_proxy_checkbox = QCheckBox("Use Proxy")
-        proxy_layout.addWidget(self.use_proxy_checkbox)
-        
-        self.proxy_input = QLineEdit()
-        self.proxy_input.setPlaceholderText("http://proxy:port")
-        proxy_layout.addWidget(self.proxy_input)
-        
-        network_layout.addRow("Proxy:", proxy_layout)
-        
-        # SSL verification
-        self.verify_ssl_checkbox = QCheckBox("Verify SSL Certificates")
-        self.verify_ssl_checkbox.setChecked(True)
-        network_layout.addRow(self.verify_ssl_checkbox, QWidget())
-        
-        layout.addWidget(network_group)
-        
-        # Logging settings
-        logging_group = QGroupBox("Logging Settings")
-        logging_layout = QFormLayout()
-        logging_group.setLayout(logging_layout)
-        
-        # Log level
-        self.log_level_combo = QComboBox()
-        self.log_level_combo.addItems(["DEBUG", "INFO", "WARNING", "ERROR"])
-        self.log_level_combo.setCurrentText("INFO")
-        logging_layout.addRow("Log Level:", self.log_level_combo)
-        
-        layout.addWidget(logging_group)
-        
-        # Action buttons
-        button_layout = QHBoxLayout()
-        
-        self.apply_settings_button = QPushButton("Apply Settings")
-        self.apply_settings_button.clicked.connect(self.apply_settings)
-        button_layout.addWidget(self.apply_settings_button)
-        
-        self.reset_settings_button = QPushButton("Reset to Defaults")
-        self.reset_settings_button.clicked.connect(self.reset_settings)
-        button_layout.addWidget(self.reset_settings_button)
-        
-        layout.addLayout(button_layout)
-        
-        # Add the tab
-        self.tab_widget.addTab(settings_tab, "Settings")
-        
-    def load_settings(self):
-        """Load application settings"""
-        settings = QSettings("MisesWire", "EpubGenerator")
-        
-        # Source settings
-        self.index_url_input.setText(settings.value("source/index_url", "https://mises.org/wire"))
-        self.pages_spinbox.setValue(int(settings.value("source/pages", 50)))
-        self.include_power_market.setChecked(settings.value("source/include_power_market", False, type=bool))
-        
-        # Processing settings
-        self.download_images_checkbox.setChecked(settings.value("processing/download_images", True, type=bool))
-        self.threads_spinbox.setValue(int(settings.value("processing/threads", 5)))
-        self.use_cache_checkbox.setChecked(settings.value("processing/use_cache", False, type=bool))
-        self.cache_dir_input.setText(settings.value("processing/cache_dir", ""))
-        
-        # Export settings
-        self.epub_title_input.setText(settings.value("export/epub_title", "Mises Wire Collection"))
-        self.output_dir_input.setText(settings.value("export/output_dir", "./mises_epub"))
-        self.cover_path_input.setText(settings.value("export/cover_path", ""))
-        self.use_split_checkbox.setChecked(settings.value("export/use_split", False, type=bool))
-        self.split_spinbox.setValue(int(settings.value("export/split_count", 5)))
-        
-        # Network settings
-        self.timeout_spinbox.setValue(int(settings.value("network/timeout", 30)))
-        self.use_proxy_checkbox.setChecked(settings.value("network/use_proxy", False, type=bool))
-        self.proxy_input.setText(settings.value("network/proxy", ""))
-        self.verify_ssl_checkbox.setChecked(settings.value("network/verify_ssl", True, type=bool))
-        
-        # Logging settings
-        self.log_level_combo.setCurrentText(settings.value("logging/level", "INFO"))
-        
-        # Apply settings
-        self.apply_settings()
-        
-    def save_settings(self):
-        """Save application settings"""
-        settings = QSettings("MisesWire", "EpubGenerator")
-        
-        # Source settings
-        settings.setValue("source/index_url", self.index_url_input.text())
-        settings.setValue("source/pages", self.pages_spinbox.value())
-        settings.setValue("source/include_power_market", self.include_power_market.isChecked())
-        
-        # Processing settings
-        settings.setValue("processing/download_images", self.download_images_checkbox.isChecked())
-        settings.setValue("processing/threads", self.threads_spinbox.value())
-        settings.setValue("processing/use_cache", self.use_cache_checkbox.isChecked())
-        settings.setValue("processing/cache_dir", self.cache_dir_input.text())
-        
-        # Export settings
-        settings.setValue("export/epub_title", self.epub_title_input.text())
-        settings.setValue("export/output_dir", self.output_dir_input.text())
-        settings.setValue("export/cover_path", self.cover_path_input.text())
-        settings.setValue("export/use_split", self.use_split_checkbox.isChecked())
-        settings.setValue("export/split_count", self.split_spinbox.value())
-        
-        # Network settings
-        settings.setValue("network/timeout", self.timeout_spinbox.value())
-        settings.setValue("network/use_proxy", self.use_proxy_checkbox.isChecked())
-        settings.setValue("network/proxy", self.proxy_input.text())
-        settings.setValue("network/verify_ssl", self.verify_ssl_checkbox.isChecked())
-        
-        # Logging settings
-        settings.setValue("logging/level", self.log_level_combo.currentText())
-        
-    def apply_settings(self):
-        """Apply current settings to the application"""
-        global PROXIES, VERIFY, TIMEOUT, CACHE_DIR
-        
-        # Update global settings
-        TIMEOUT = self.timeout_spinbox.value()
-        
-        # Configure proxy
-        if self.use_proxy_checkbox.isChecked() and self.proxy_input.text():
-            PROXIES = {"http": self.proxy_input.text(), "https": self.proxy_input.text()}
-        else:
-            PROXIES = {}
-            
-        # Configure SSL verification
-        if self.verify_ssl_checkbox.isChecked():
-            VERIFY = certifi.where()
-        else:
-            VERIFY = False
-            
-        # Configure cache
-        if self.use_cache_checkbox.isChecked() and self.cache_dir_input.text():
-            CACHE_DIR = self.cache_dir_input.text()
-            os.makedirs(CACHE_DIR, exist_ok=True)
-        else:
-            CACHE_DIR = None
-            
-        # Configure logging
-        log_level = getattr(logging, self.log_level_combo.currentText())
-        logging.basicConfig(
-            level=log_level,
-            format='%(asctime)s - %(levelname)s - %(message)s',
-            handlers=[
-                logging.FileHandler("mises_scraper.log"),
-                logging.StreamHandler()
-            ],
-            force=True
-        )
-        
-        self.status_widget.set_status("Settings applied successfully.")
-        self.save_settings()
-        
-    def reset_settings(self):
-        """Reset settings to defaults"""
-        # Source settings
-        self.index_url_input.setText("https://mises.org/wire")
-        self.pages_spinbox.setValue(50)
-        self.include_power_market.setChecked(False)
-        
-        # Processing settings
-        self.download_images_checkbox.setChecked(True)
-        self.threads_spinbox.setValue(5)
-        self.use_cache_checkbox.setChecked(False)
-        self.cache_dir_input.setText("")
-        
-        # Export settings
-        self.epub_title_input.setText("Mises Wire Collection")
-        self.output_dir_input.setText("./mises_epub")
-        self.cover_path_input.setText("")
-        self.use_split_checkbox.setChecked(False)
-        self.split_spinbox.setValue(5)
-        
-        # Network settings
-        self.timeout_spinbox.setValue(30)
-        self.use_proxy_checkbox.setChecked(False)
-        self.proxy_input.setText("")
-        self.verify_ssl_checkbox.setChecked(True)
-        
-        # Logging settings
-        self.log_level_combo.setCurrentText("INFO")
-        
-        # Apply the default settings
-        self.apply_settings()
-        self.status_widget.set_status("Settings reset to defaults.")
-        
-    def browse_cache_dir(self):
-        """Browse for cache directory"""
-        directory = QFileDialog.getExistingDirectory(self, "Select Cache Directory")
-        if directory:
-            self.cache_dir_input.setText(directory)
-            
-    def browse_output_dir(self):
-        """Browse for output directory"""
-        directory = QFileDialog.getExistingDirectory(self, "Select Output Directory")
-        if directory:
-            self.output_dir_input.setText(directory)
-            
-    def browse_cover_image(self):
-        """Browse for cover image file"""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, "Select Cover Image", "", "Image Files (*.jpg *.jpeg *.png);;All Files (*)"
-        )
-        if file_path:
-            self.cover_path_input.setText(file_path)
-            
-    def open_output_directory(self):
-        """Open the output directory in file explorer"""
-        output_dir = self.output_dir_input.text()
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-            
-        QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(output_dir)))
-        
-    def open_epub_file(self, item):
-        """Open the selected EPUB file with the default application"""
-        file_path = item.text()
-        if os.path.exists(file_path):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(file_path))
-        else:
-            self.status_widget.set_status(f"File not found: {file_path}")
-            
-    def fetch_articles(self):
-        """Fetch articles from the selected source"""
-        # Validate source selection
-        if self.source_index_radio.isChecked():
-            index_url = self.index_url_input.text()
-            if not is_valid_url(index_url):
-                self.status_widget.set_status("❌ Invalid index URL provided.")
-                return
-                
-            max_pages = self.pages_spinbox.value()
-            
-            # Setup progress tracking
-            self.fetch_progress.setRange(0, max_pages)
-            self.fetch_progress.setValue(0)
-            self.fetch_progress.setVisible(True)
-            
-            # Disable the fetch button while working
-            self.fetch_button.setEnabled(False)
-            
-            # Create and start worker thread
-            self.status_widget.set_status(f"Fetching articles from {index_url}...")
-            self.worker = ArticleFetchWorker(index_url, max_pages)
-            
-            # Connect signals
-            self.worker.progress.connect(self.update_fetch_progress)
-            self.worker.status.connect(self.status_widget.set_status)
-            self.worker.finished.connect(self.fetch_completed)
-            
-            # Start the worker
-            self.worker.start()
-            
-        elif self.source_url_radio.isChecked():
-            url = self.specific_url_input.text()
-            if not is_valid_url(url):
-                self.status_widget.set_status("❌ Invalid article URL provided.")
-                return
-                
-            self.article_list_widget.add_article(url)
-            self.status_widget.set_status(f"Added article URL: {url}")
-            
-        elif self.source_list_radio.isChecked():
-            self.status_widget.set_status("Please add URLs manually using the 'Add URL' button.")
-            
-    def update_fetch_progress(self, page, max_pages, num_articles):
-        """Update the progress bar during article fetching"""
-        self.fetch_progress.setValue(page)
-        self.status_widget.set_status(f"Fetching page {page}/{max_pages} - Found {num_articles} articles")
-        
-    def fetch_completed(self, article_links):
-        """Handle the completion of article fetching"""
-        self.fetch_progress.setVisible(False)
-        self.fetch_button.setEnabled(True)
-        
-        # Add the fetched article links
-        self.article_list_widget.add_articles(article_links)
-        
-        # Check if we should include Power Market articles
-        if self.include_power_market.isChecked():
-            self.status_widget.set_status("Fetching articles from Power Market...")
-            
-            # Create and start a new worker thread for Power Market
-            self.worker = ArticleFetchWorker("https://mises.org/power-market", self.pages_spinbox.value())
-            
-            # Connect signals
-            self.worker.progress.connect(self.update_fetch_progress)
-            self.worker.status.connect(self.status_widget.set_status)
-            self.worker.finished.connect(lambda links: self.power_market_completed(links))
-            
-            # Start the worker
-            self.worker.start()
-        else:
-            self.status_widget.set_status(f"✅ Fetched {len(article_links)} articles.")
-            
-    def power_market_completed(self, article_links):
-        """Handle the completion of Power Market article fetching"""
-        self.fetch_progress.setVisible(False)
-        self.fetch_button.setEnabled(True)
-        
-        # Add the fetched article links
-        self.article_list_widget.add_articles(article_links)
-        
-        self.status_widget.set_status(f"✅ Added {len(article_links)} Power Market articles.")
-        
-    def add_specific_url(self):
-        """Add a specific URL to the article list"""
-        url = self.specific_url_input.text()
-        if not url:
-            self.status_widget.set_status("Please enter a URL first.")
-            return
-            
-        if not is_valid_url(url):
-            self.status_widget.set_status("❌ Invalid URL format.")
-            return
-            
-        self.article_list_widget.add_article(url)
-        self.specific_url_input.clear()
-        self.status_widget.set_status(f"Added article URL: {url}")
-        
-    def process_articles(self):
-        """Process the articles in the list"""
-        urls = self.article_list_widget.get_urls()
-        if not urls:
-            self.status_widget.set_status("No articles to process. Please fetch or add some first.")
-            return
-            
-        # Clear previous processed results
-        self.processed_chapters = []
-        self.processed_list.clear()
-        self.processed_count_label.setText("0 articles processed")
-        
-        # Setup progress tracking
-        self.process_progress.setRange(0, len(urls))
-        self.process_progress.setValue(0)
-        self.process_progress.setVisible(True)
-        
-        # Disable the process button while working
-        self.process_button.setEnabled(False)
-        
-        # Create and start worker thread
-        download_images = self.download_images_checkbox.isChecked()
-        threads = self.threads_spinbox.value()
-        
-        self.status_widget.set_status(f"Processing {len(urls)} articles with {threads} threads...")
-        self.worker = ArticleProcessWorker(urls, download_images, threads)
-        
-        # Connect signals
-        self.worker.progress.connect(self.update_process_progress)
-        self.worker.status.connect(self.status_widget.set_status)
-        self.worker.article_processed.connect(self.article_processed)
-        self.worker.article_failed.connect(lambda url: self.status_widget.add_log_message(f"Failed to process: {url}"))
-        self.worker.finished.connect(self.processing_completed)
-        
-        # Start the worker
-        self.worker.start()
-        
-    def update_process_progress(self, current, total):
-        """Update the progress bar during article processing"""
-        self.process_progress.setValue(current)
-        
-    def article_processed(self, article_data):
-        """Handle a successfully processed article"""
-        title, chapter, metadata, image_items = article_data
-        
-        # Add to our processed chapters list
-        self.processed_chapters.append((title, chapter, metadata, image_items))
-        
-        # Update UI
-        self.processed_list.addItem(title)
-        self.processed_count_label.setText(f"{len(self.processed_chapters)} articles processed")
-        
-    def processing_completed(self, processed_chapters):
-        """Handle the completion of article processing"""
-        self.process_progress.setVisible(False)
-        self.process_button.setEnabled(True)
-        
-        total = len(processed_chapters)
-        self.status_widget.set_status(f"✅ Processed {total} articles successfully.")
-        
-        # Switch to the Export tab
-        self.tab_widget.setCurrentIndex(2)
-        
-    def create_epub_files(self):
-        """Create EPUB files from the processed articles"""
-        if not self.processed_chapters:
-            self.status_widget.set_status("No processed articles available. Please process some first.")
-            return
-            
-        # Get export settings
-        epub_title = self.epub_title_input.text()
-        save_dir = self.output_dir_input.text()
-        cover_path = self.cover_path_input.text() if os.path.exists(self.cover_path_input.text()) else None
-        
-        # Create output directory if it doesn't exist
-        os.makedirs(save_dir, exist_ok=True)
-        
-        # Check if we should split the EPUB
-        split = None
-        if self.use_split_checkbox.isChecked():
-            split = self.split_spinbox.value()
-            
-        # Setup progress tracking
-        self.export_progress.setValue(0)
-        self.export_progress.setVisible(True)
-        
-        # Disable the create button while working
-        self.create_epub_button.setEnabled(False)
-        
-        # Clear previous results
-        self.results_list.clear()
-        
-        # Create and start worker thread
-        self.status_widget.set_status(f"Creating EPUB with {len(self.processed_chapters)} articles...")
-        self.worker = EpubCreationWorker(self.processed_chapters, save_dir, epub_title, cover_path, split)
-        
-        # Connect signals
-        self.worker.progress.connect(lambda current, total: self.export_progress.setValue(int(100 * current / total)))
-        self.worker.status.connect(self.status_widget.set_status)
-        self.worker.finished.connect(self.epub_creation_completed)
-        
-        # Start the worker
-        self.worker.start()
-        
-    def epub_creation_completed(self, generated_files):
-        """Handle the completion of EPUB creation"""
-        self.export_progress.setVisible(False)
-        self.create_epub_button.setEnabled(True)
-        
-        if not generated_files:
-            self.status_widget.set_status("❌ Failed to create any EPUB files.")
-            return
-            
-        self.status_widget.set_status(f"✅ Successfully created {len(generated_files)} EPUB file(s).")
-        
-        # Add files to the results list
-        for file_path in generated_files:
-            self.results_list.addItem(file_path)
-            
-        # Ask if user wants to open the output directory
-        reply = QMessageBox.question(
-            self, 
-            "EPUB Creation Completed", 
-            f"Successfully created {len(generated_files)} EPUB file(s).\n\nWould you like to open the output directory?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            self.open_output_directory()
+        tab, layout = QWidget(), QVBoxLayout()
+        tab.setLayout(layout)
+        export_group = QGroupBox("📦 EPUB Export Configuration")
+        export_layout = QFormLayout(export_group)
+        self.epub_title_input = QLineEdit("Mises Wire Collection"); export_layout.addRow("EPUB Title:", self.epub_title_input)
+        self.author_input = QLineEdit("Mises Wire"); export_layout.addRow("Author:", self.author_input)
+        
+        save_layout = QHBoxLayout(); self.save_dir_input = QLineEdit()
+        browse_save_button = QPushButton("Browse..."); browse_save_button.clicked.connect(self.browse_save_dir)
+        save_layout.addWidget(self.save_dir_input); save_layout.addWidget(browse_save_button)
+        export_layout.addRow("Save Directory:", save_layout)
 
-# --- Main Function ---
-def main():
-    # Configure application
-    QCoreApplication.setApplicationName("Mises Wire EPUB Generator")
-    QCoreApplication.setOrganizationName("MisesWire")
+        split_layout = QHBoxLayout(); self.split_epub_checkbox = QCheckBox("Split into multiple files");
+        self.split_count_spinbox = QSpinBox(); self.split_count_spinbox.setRange(2, 100); self.split_count_spinbox.setEnabled(False)
+        split_layout.addWidget(self.split_epub_checkbox); split_layout.addWidget(self.split_count_spinbox);
+        export_layout.addRow("Splitting:", split_layout)
+        layout.addWidget(export_group)
+
+        self.cover_preview = CoverPreviewWidget()
+        layout.addWidget(self.cover_preview)
+        
+        export_button_layout = QHBoxLayout()
+        self.create_epub_button = QPushButton("💾 Create EPUB"); self.create_epub_button.setEnabled(False)
+        self.open_folder_button = QPushButton("📂 Open Folder"); self.open_folder_button.setEnabled(False)
+        export_button_layout.addWidget(self.create_epub_button)
+        export_button_layout.addWidget(self.open_folder_button)
+        layout.addLayout(export_button_layout)
+        layout.addWidget(self.create_epub_button)
+        self.epub_progress = QProgressBar(); self.epub_progress.setVisible(False)
+        layout.addWidget(self.epub_progress)
+        layout.addStretch()
+        self.tab_widget.addTab(tab, "💾 Export")
+
+    def setup_menu_bar(self):
+        menu = self.menuBar()
+        file_menu = menu.addMenu("&File")
+        file_menu.addAction("E&xit", self.close, QKeySequence.Quit)
+        edit_menu = menu.addMenu("&Edit")
+        edit_menu.addAction("&Advanced Settings...", self.show_advanced_settings)
+        view_menu = menu.addMenu("&View")
+        self.toggle_theme_action = view_menu.addAction("Toggle Dark/Light Theme", self.toggle_theme)
+        help_menu = menu.addMenu("&Help")
+        help_menu.addAction("&About", self.show_about_dialog)
+
+    def setup_tool_bar(self):
+        toolbar = self.addToolBar("Main Toolbar")
+        toolbar.addAction(self.toggle_theme_action)
+        toolbar.addAction("Settings", self.show_advanced_settings)
     
-    # Create and run application
-    app = QApplication(sys.argv)
-    window = MisesWireApp()
-    window.show()
-    sys.exit(app.exec_())
+    def setup_status_bar(self):
+        self.statusBar().showMessage("Ready")
 
-if __name__ == "__main__":
-    main()
+    def setup_signal_connections(self):
+        self.url_presets_combo.currentTextChanged.connect(self.load_url_preset)
+        self.pages_slider.valueChanged.connect(self.pages_spinbox.setValue)
+        self.pages_spinbox.valueChanged.connect(self.pages_slider.setValue)
+        self.fetch_button.clicked.connect(self.fetch_articles)
+        self.stop_button.clicked.connect(self.stop_current_worker)
+        self.add_url_button.clicked.connect(self.add_specific_url)
+        self.threads_slider.valueChanged.connect(self.threads_spinbox.setValue)
+        self.threads_spinbox.valueChanged.connect(self.threads_slider.setValue)
+        self.process_button.clicked.connect(self.process_articles)
+        self.create_epub_button.clicked.connect(self.create_epub_file)
+        self.split_epub_checkbox.stateChanged.connect(self.split_count_spinbox.setEnabled)
+        self.article_list_widget.article_list.model().rowsInserted.connect(self.update_ui_state)
+        self.article_list_widget.article_list.model().rowsRemoved.connect(self.update_ui_state)
+        self.open_folder_button.clicked.connect(self.open_destination_folder)
+
+    def closeEvent(self, event):
+        self.save_settings()
+        event.accept()
+    def open_destination_folder(self):
+            folder_path = self.save_dir_input.text()
+            if os.path.isdir(folder_path):
+                QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path))
+            else:
+                QMessageBox.warning(self, "Folder Not Found", f"The directory does not exist:\n{folder_path}")
+
+    def load_settings(self):
+        self.restoreGeometry(self.settings.value("ui/geometry", QByteArray()))
+        self.restoreState(self.settings.value("ui/windowState", QByteArray()))
+        self.main_splitter.restoreState(self.settings.value("ui/splitterState", QByteArray()))
+        self.save_dir_input.setText(self.settings.value("paths/save_dir", QStandardPaths.writableLocation(QStandardPaths.DocumentsLocation)))
+        self.apply_advanced_settings()
+
+    def save_settings(self):
+        self.settings.setValue("ui/geometry", self.saveGeometry())
+        self.settings.setValue("ui/windowState", self.saveState())
+        self.settings.setValue("ui/splitterState", self.main_splitter.saveState())
+        self.settings.setValue("ui/dark_theme", self.is_dark_theme)
+        self.settings.setValue("paths/save_dir", self.save_dir_input.text())
+        
+    def apply_advanced_settings(self):
+        global TIMEOUT, PROXIES, VERIFY, CACHE_DIR
+        TIMEOUT = self.settings.value("advanced/timeout", 30, type=int)
+        if self.settings.value("advanced/use_proxy", False, type=bool):
+            proxy_url = self.settings.value("advanced/proxy_url", "", type=str)
+            PROXIES = {"http": proxy_url, "https": proxy_url} if proxy_url else {}
+        else: PROXIES = {}
+        VERIFY = certifi.where() if self.settings.value("advanced/verify_ssl", True, type=bool) else False
+        CACHE_DIR = self.settings.value("advanced/cache_dir", "") if self.settings.value("advanced/enable_cache", False, type=bool) else None
+
+    def toggle_theme(self):
+        self.is_dark_theme = not self.is_dark_theme
+        self.apply_theme()
+    
+    def apply_theme(self):
+        self.setStyleSheet(DARK_STYLESHEET if self.is_dark_theme else LIGHT_STYLESHEET)
+        self.cover_preview.clear_image() # Re-apply style
+
+    def load_url_preset(self, preset):
+        urls = {"Mises Wire": "https://mises.org/wire", "Power Market": "https://mises.org/power-market"}
+        self.index_url_input.setText(urls.get(preset, ""))
+
+    def browse_save_dir(self):
+        directory = QFileDialog.getExistingDirectory(self, "Select Save Directory", self.save_dir_input.text())
+        if directory: self.save_dir_input.setText(directory)
+
+    def show_advanced_settings(self):
+        dialog = AdvancedSettingsDialog(self.settings, self)
+        if dialog.exec_(): self.apply_advanced_settings()
+    
+    def show_about_dialog(self):
+        QMessageBox.about(self, f"About {APP_NAME}", f"Version {APP_VERSION}\n\nA tool to download and compile Mises.org articles into EPUB format.")
+
+    def update_ui_state(self):
+        has_articles = self.article_list_widget.article_list.count() > 0
+        has_processed = len(self.processed_chapters) > 0
+        self.process_button.setEnabled(has_articles)
+        self.create_epub_button.setEnabled(has_processed)
+        self.stats_labels['total'].setText(str(self.article_list_widget.article_list.count()))
+        self.stats_labels['processed'].setText(str(len(self.processed_chapters)))
+        failed_count = sum(1 for _, (_, _, status) in self.article_list_widget.articles.items() if status == 'failed')
+        self.stats_labels['failed'].setText(str(failed_count))
+
+    def stop_current_worker(self):
+        if self.current_worker and self.current_worker.isRunning():
+            self.status_widget.add_log_message("Stop request sent to worker.", "warning")
+            self.current_worker.stop()
+
+    def set_busy(self, busy, task=""):
+        self.fetch_button.setVisible(not busy)
+        self.process_button.setVisible(not busy)
+        self.create_epub_button.setVisible(not busy)
+        self.stop_button.setVisible(busy)
+        for i in range(self.tab_widget.count()): self.tab_widget.widget(i).setEnabled(not busy)
+        if task == "fetch": self.fetch_progress.setVisible(busy)
+        elif task == "process": self.process_progress.setVisible(busy)
+        elif task == "epub": self.epub_progress.setVisible(busy)
+        if not busy:
+            self.fetch_progress.setVisible(False); self.process_progress.setVisible(False); self.epub_progress.setVisible(False)
+            self.current_worker = None
+
+    def add_specific_url(self):
+        url = self.specific_url_input.text().strip()
+        if is_valid_url(url):
+            if self.article_list_widget.add_article(url):
+                self.status_widget.add_log_message(f"Added URL: {url}", "info")
+                self.specific_url_input.clear()
+                self.update_ui_state()
+            else:
+                self.status_widget.add_log_message(f"URL already in list: {url}", "warning")
+        else:
+            QMessageBox.warning(self, "Invalid URL", "Please enter a valid article URL.")
+
+    def fetch_articles(self):
+        self.set_busy(True, "fetch")
+        source_type = self.source_type_group.checkedId()
+        if source_type == 0: # Index
+            
+            # --- START OF PRECISE FIX ---
+            
+            # The primary source for "Index Fetch" is now hardcoded to Mises Wire.
+            # This prevents confusion where the URL box says one thing and the checkbox another.
+            base_url = "https://mises.org/wire"
+            
+            # We can optionally update the UI to reflect this, ensuring no confusion.
+            self.index_url_input.setText(base_url)
+            
+            pages = self.pages_spinbox.value()
+            
+            # The worker thread is now created with the correct, non-conflicting parameters.
+            # It will always fetch from Mises Wire, and ONLY add Power Market articles
+            # if the checkbox is checked.
+            self.current_worker = ArticleFetchWorker(
+                base_url, 
+                pages, 
+                self.include_power_market.isChecked(), 
+                self.stop_on_no_new_links.isChecked()
+            )
+
+            # --- END OF PRECISE FIX ---
+
+            self.current_worker.progress.connect(self.update_fetch_progress)
+            self.current_worker.finished.connect(self.handle_fetch_finished)
+            self.current_worker.status.connect(self.status_widget.set_status)
+            self.current_worker.start()
+        elif source_type == 1: # Single URL
+            self.add_specific_url()
+            self.set_busy(False)
+        elif source_type == 2: # URL List
+            urls = [line.strip() for line in self.url_list_text.toPlainText().splitlines() if line.strip()]
+            added = self.article_list_widget.add_articles(urls)
+            self.status_widget.add_log_message(f"Added {added} new URLs from list.", "info")
+            self.update_ui_state()
+            self.set_busy(False)
+
+    def update_fetch_progress(self, page, max_pages, count):
+        self.fetch_progress.setRange(0, max_pages)
+        self.fetch_progress.setValue(page)
+        self.fetch_status_label.setText(f"Page {page}/{max_pages} | Found {count} articles")
+    
+    def handle_fetch_finished(self, links):
+        added = self.article_list_widget.add_articles(links)
+        self.status_widget.add_log_message(f"Fetch complete. Added {added} new article URLs.", "success")
+        self.fetch_status_label.setText(f"Fetch complete. Found {len(links)} articles.")
+        self.set_busy(False)
+        self.update_ui_state()
+        if links: self.tab_widget.setCurrentIndex(1) # Move to processing tab
+
+    def process_articles(self):
+        urls_to_process = self.article_list_widget.get_urls()
+        if not urls_to_process:
+            QMessageBox.information(self, "No Articles", "No articles to process.")
+            return
+        self.processed_chapters.clear()
+        self.set_busy(True, "process")
+        for url in urls_to_process: self.article_list_widget.update_article_status(url, "processing")
+        self.current_worker = ArticleProcessWorker(urls_to_process, self.download_images_checkbox.isChecked(), self.threads_spinbox.value())
+        self.current_worker.progress.connect(self.update_process_progress)
+        self.current_worker.article_processed.connect(self.handle_article_processed)
+        self.current_worker.article_failed.connect(self.handle_article_failed)
+        self.current_worker.finished.connect(self.handle_process_finished)
+        self.current_worker.status.connect(self.status_widget.add_log_message)
+        self.current_worker.start()
+
+    def update_process_progress(self, current, total):
+        self.process_progress.setRange(0, total)
+        self.process_progress.setValue(current)
+        self.process_status_label.setText(f"Processing {current}/{total}")
+
+    def handle_article_processed(self, result):
+            self.processed_chapters.append(result)
+            title, chapter, metadata, image_items = result
+            # A more robust way to get the URL
+            url_match = re.search(r"href=['\"](https?://[^'\"]+)['\"]", chapter.content.decode('utf-8', errors='ignore'))
+            if url_match:
+                url = url_match.group(1)
+                self.article_list_widget.update_article_status(url, "completed", title)
+
+    def handle_article_failed(self, url):
+        self.article_list_widget.update_article_status(url, "failed")
+    
+    def handle_process_finished(self):
+            self.status_widget.add_log_message(f"Processing finished. {len(self.processed_chapters)} articles ready for EPUB.", "success")
+            self.set_busy(False)
+            self.update_ui_state()
+            if self.processed_chapters: self.tab_widget.setCurrentIndex(2) # Move to export tab
+
+
+    def create_epub_file(self):
+        save_dir = self.save_dir_input.text()
+        if not save_dir or not os.path.isdir(save_dir):
+            QMessageBox.warning(self, "Invalid Directory", "Please select a valid directory to save the EPUB.")
+            return
+        
+        self.set_busy(True, "epub")
+        self.current_worker = EpubCreationWorker(
+            self.processed_chapters,
+            save_dir,
+            self.epub_title_input.text(),
+            self.author_input.text(),
+            self.cover_preview.get_image_path(),
+            self.split_count_spinbox.value() if self.split_epub_checkbox.isChecked() else None
+        )
+        self.current_worker.progress.connect(self.update_epub_progress)
+        self.current_worker.finished.connect(self.handle_epub_finished)
+        self.current_worker.status.connect(self.status_widget.add_log_message)
+        self.current_worker.start()
+
+    def update_epub_progress(self, current, total):
+        self.epub_progress.setRange(0, total)
+        self.epub_progress.setValue(current)
+        if total > 1: self.status_widget.set_status(f"Creating EPUB file {current} of {total}")
+
+    def handle_epub_finished(self, filenames):
+            self.set_busy(False)
+            if filenames:
+                self.open_folder_button.setEnabled(True)
+                folder_path = os.path.dirname(filenames[0])
+                reply = QMessageBox.information(self, "Success", f"EPUB file(s) created successfully in:\n{folder_path}",
+                                                QMessageBox.Ok | QMessageBox.Open)
+                if reply == QMessageBox.Open:
+                    self.open_destination_folder()
+
+
+def setup_logging():
+    log_format = '%(asctime)s - %(levelname)s - %(message)s'
+    logging.basicConfig(level=logging.INFO, format=log_format)
+    # You can add a file handler if needed
+    # file_handler = logging.FileHandler("app.log")
+    # file_handler.setFormatter(logging.Formatter(log_format))
+    # logging.getLogger().addHandler(file_handler)
+
+if __name__ == '__main__':
+    setup_logging()
+    app = QApplication(sys.argv)
+    QCoreApplication.setOrganizationName("MisesWire")
+    QCoreApplication.setApplicationName("EpubGenerator")
+    
+    main_window = MisesWireApp()
+    main_window.show()
+    sys.exit(app.exec_())

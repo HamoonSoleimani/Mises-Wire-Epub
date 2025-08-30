@@ -1713,8 +1713,20 @@ class ArticleListWidget(QFrame):
         return True
         
     def add_articles(self, urls):
-        added = sum(1 for url in urls if self.add_article(url))
+        # This method is for BATCH additions and is now efficient.
+        added = 0
+        # First, update the internal dictionary without touching the UI.
+        for url in urls:
+            if url not in self.articles:
+                self.articles[url] = (self.extract_title_from_url(url), None, "pending")
+                added += 1
+        
+        # After all dictionary updates, refresh the UI widget once.
+        if added > 0:
+            self.filter_articles()
+        
         return added
+
         
     def update_article_status(self, url, status, title=None):
         if url in self.articles:
@@ -1737,23 +1749,30 @@ class ArticleListWidget(QFrame):
             self.articles = {url: data for url, data in self.articles.items() if url not in urls_to_remove}
             self.filter_articles()
         
+    # EDIT THIS METHOD
     def filter_articles(self):
         search_text = self.search_input.text().lower()
-        self.article_list.clear()
-        filtered_count = 0
-        sorted_articles = sorted(self.articles.items(), key=lambda item: item[1][0]) # Sort by title
-        for url, (title, metadata, status) in sorted_articles:
-            if search_text in title.lower() or search_text in url.lower() or search_text in status.lower():
-                item = QListWidgetItem()
-                status_color = {"pending": "#f39c12", "processing": "#3498db", "completed": "#27ae60",
-                                "failed": "#e74c3c"}.get(status, "#95a5a6")
-                item.setText(f"[{status.upper()}] {title}")
-                item.setToolTip(f"URL: {url}\nStatus: {status}")
-                item.setData(Qt.UserRole, url)
-                item.setForeground(QColor(status_color))
-                self.article_list.addItem(item)
-                filtered_count += 1
-        self.update_count(filtered_count)
+        
+        self.article_list.setUpdatesEnabled(False)  # <<< ADD THIS
+        try:
+            self.article_list.clear()
+            filtered_count = 0
+            sorted_articles = sorted(self.articles.items(), key=lambda item: item[1][0]) # Sort by title
+            for url, (title, metadata, status) in sorted_articles:
+                if search_text in title.lower() or search_text in url.lower() or search_text in status.lower():
+                    item = QListWidgetItem()
+                    status_color = {"pending": "#f39c12", "processing": "#3498db", "completed": "#27ae60",
+                                    "failed": "#e74c3c"}.get(status, "#95a5a6")
+                    item.setText(f"[{status.upper()}] {title}")
+                    item.setToolTip(f"URL: {url}\nStatus: {status}")
+                    item.setData(Qt.UserRole, url)
+                    item.setForeground(QColor(status_color))
+                    self.article_list.addItem(item)
+                    filtered_count += 1
+            self.update_count(filtered_count)
+        finally:
+            self.article_list.setUpdatesEnabled(True) # <<< ADD THIS
+            
         
     def update_count(self, filtered_count):
         total = len(self.articles)
@@ -2134,9 +2153,10 @@ class MisesWireApp(QMainWindow):
         self.process_button.clicked.connect(self.process_articles)
         self.create_epub_button.clicked.connect(self.create_epub_file)
         self.split_epub_checkbox.stateChanged.connect(self.split_count_spinbox.setEnabled)
-        self.article_list_widget.article_list.model().rowsInserted.connect(self.update_ui_state)
+        # self.article_list_widget.article_list.model().rowsInserted.connect(self.update_ui_state) # <<< DELETE THIS LINE
         self.article_list_widget.article_list.model().rowsRemoved.connect(self.update_ui_state)
         self.open_folder_button.clicked.connect(self.open_destination_folder)
+
 
     def closeEvent(self, event):
         self.save_settings()

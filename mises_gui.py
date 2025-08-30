@@ -888,108 +888,94 @@ def should_ignore_image_url(url):
     return False
 
 # --- Core Article Fetching and Processing Functions ---
-def get_article_links(index_url, max_pages=9999, progress_callback=None, stop_callback=None, unique_links_check=True):
+def get_article_links(index_url, max_pages=9999, progress_callback=None, stop_callback=None, unique_links_check=True, num_threads=8):
     """
-    Fetch article URLs from the given index site and paginated pages.
-    This version includes a special alias for /wire -> /mises-wire to correctly filter links.
+    Fetch article URLs from the given index site and paginated pages using a thread pool for concurrency.
     """
     all_article_links = set()
     consecutive_no_new = 0
-    max_consecutive_no_new = 3
+    max_consecutive_no_new = 3 * num_threads  # Scale the stop condition with thread count
 
-    # Determine the target path segment from the index URL (e.g., '/wire' or '/power-market').
     target_path = urlparse(index_url).path
-    if not target_path.endswith('/'):
-        target_path += '/'
-    logging.info(f"Scraping context detected. Targeting links for path: '{target_path}'")
-
-    # --- START OF THE DEFINITIVE FIX ---
-    # SPECIAL CASE: The user-facing URL '/wire/' contains links that actually start with '/mises-wire/'.
-    # We must account for this alias to correctly identify the articles.
-    aliased_target_path = None
-    if target_path == '/wire/':
-        aliased_target_path = '/mises-wire/'
+    if not target_path.endswith('/'): target_path += '/'
+    logging.info(f"Scraping context detected. Targeting links for path: '{target_path}' with {num_threads} threads.")
+    
+    aliased_target_path = '/mises-wire/' if target_path == '/wire/' else None
+    if aliased_target_path:
         logging.info(f"Applying special alias: Actual link path to check for is '{aliased_target_path}'")
-    # --- END OF THE DEFINITIVE FIX ---
 
     def fetch_page_links(page_num):
+        # This inner function remains the same, it will be called by multiple threads.
+        if stop_callback and stop_callback(): return set(), True
         page_url = f"{index_url}?page={page_num}" if page_num > 0 else index_url
-        logging.debug(f"Fetching index page: {page_url}")
         try:
             page_content = cached_get(page_url)
+            soup = BeautifulSoup(page_content, 'html.parser')
+            page_links = set()
+            potential_links = soup.select('article a[href], div.views-field-title span.field-content a[href]')
+            for a_tag in potential_links:
+                href = a_tag.get('href', '')
+                if href and href.startswith('/'):
+                    absolute_url = urljoin(index_url, href)
+                    parsed_url = urlparse(absolute_url)
+                    path_is_valid = parsed_url.path.startswith(target_path) or \
+                                    (aliased_target_path and parsed_url.path.startswith(aliased_target_path))
+                    if path_is_valid:
+                        page_links.add(absolute_url)
+            if not page_links:
+                return set(), True # Returns (links, end_reached_flag)
+            return page_links, False
         except requests.exceptions.RequestException as e:
             logging.error(f"Failed to fetch index page {page_url}: {e}")
-            return set(), False
+            return set(), True # Treat failure as an end condition for this page
 
-        soup = BeautifulSoup(page_content, 'html.parser')
-        page_links = set()
-
-        # These selectors correctly find all potential article links on the page.
-        potential_links = soup.select('article a[href], div.views-field-title span.field-content a[href]')
-
-        for a_tag in potential_links:
-            href = a_tag.get('href', '')
-            if not href or not href.startswith('/'):
-                continue
-
-            absolute_url = urljoin(index_url, href)
-            parsed_url = urlparse(absolute_url)
-
-            # The CRITICAL check, now with alias support:
-            path_is_valid = parsed_url.path.startswith(target_path)
-            if not path_is_valid and aliased_target_path:
-                # If the primary path check fails, check the alias.
-                path_is_valid = parsed_url.path.startswith(aliased_target_path)
-
-            if path_is_valid:
-                page_links.add(absolute_url)
-            else:
-                logging.debug(f"Skipping off-topic link: {absolute_url}")
-
-        if not page_links:
-            log_path_info = f"'{target_path}'" + (f" or '{aliased_target_path}'" if aliased_target_path else "")
-            logging.info(f"No articles matching {log_path_info} found on page {page_num}, might have reached the end.")
-            return set(), True
-
-        return page_links, False
-
-    # Start page count from 0 for Mises.org pagination
     page_num = 0
-    end_reached = False
+    total_pages_processed = 0
+    # Process pages in chunks to manage memory and requests
+    chunk_size = num_threads * 4 # Fetch a few chunks ahead to keep threads busy
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
+        while page_num < max_pages:
+            if stop_callback and stop_callback():
+                logging.info("Fetching stopped by user")
+                break
 
-    while page_num < max_pages and not end_reached:
-        if stop_callback and stop_callback():
-            logging.info("Fetching stopped by user")
-            break
+            page_range = range(page_num, page_num + chunk_size)
+            future_to_page = {executor.submit(fetch_page_links, p): p for p in page_range}
+            
+            chunk_had_new_links = False
+            for future in concurrent.futures.as_completed(future_to_page):
+                if stop_callback and stop_callback(): break
+                links, end_reached = future.result()
+                total_pages_processed += 1
+                
+                new_links = links - all_article_links
+                if new_links:
+                    all_article_links.update(links)
+                    consecutive_no_new = 0 # Reset counter if any thread finds new links
+                    chunk_had_new_links = True
+                    logging.info(f"Page {future_to_page[future]}: Found {len(new_links)} new unique links. Total: {len(all_article_links)}")
+                else:
+                    consecutive_no_new += 1
 
-        links, end_reached = fetch_page_links(page_num)
-        new_links = links - all_article_links
-
-        if page_num == 0 and not new_links:
-            logging.warning(f"No articles found on the first page ({index_url}). Please check the URL and site structure.")
-            break
-
-        all_article_links.update(links)
-
-        if unique_links_check and page_num > 0:
-            if not new_links:
-                consecutive_no_new += 1
-                logging.info(f"Page {page_num}: No new unique links found (consecutive: {consecutive_no_new})")
-                if consecutive_no_new >= max_consecutive_no_new:
-                    logging.info(f"Stopping: No new unique links found in {max_consecutive_no_new} consecutive pages")
+                if progress_callback:
+                    # Show progress based on pages processed so far
+                    progress_callback(total_pages_processed, max_pages, len(all_article_links))
+                
+                if end_reached and not unique_links_check:
+                    logging.info(f"Stopping because page {future_to_page[future]} indicated the end.")
+                    page_num = max_pages # Force outer loop to exit
                     break
-            else:
-                consecutive_no_new = 0
-                logging.info(f"Page {page_num}: Found {len(new_links)} new unique links. Total: {len(all_article_links)}")
-
-        if progress_callback: progress_callback(page_num + 1, max_pages, len(all_article_links))
-
-        page_num += 1
-        time.sleep(0.5)
+            
+            if unique_links_check and consecutive_no_new >= max_consecutive_no_new:
+                 logging.info(f"Stopping: No new unique links found in the last {max_consecutive_no_new} attempts.")
+                 break
+            
+            page_num += chunk_size
+            time.sleep(0.1) # Small delay between chunks
 
     logging.info(f"Total unique article links found for '{target_path}': {len(all_article_links)}")
     return list(all_article_links)
-
     
 def get_article_metadata(soup, url):
     """
@@ -1408,10 +1394,11 @@ class ArticleFetchWorker(QThread):
     progress = pyqtSignal(int, int, int)
     status = pyqtSignal(str)
 
-    def __init__(self, fetch_tasks, stop_on_no_new_links=True):
+    def __init__(self, fetch_tasks, stop_on_no_new_links=True, num_threads=8):
         super().__init__()
         self.fetch_tasks = fetch_tasks
         self.stop_on_no_new_links = stop_on_no_new_links
+        self.num_threads = num_threads
         self._stop_requested = False
 
     def stop(self):
@@ -1434,7 +1421,8 @@ class ArticleFetchWorker(QThread):
                     task['url'], task['pages'],
                     progress_callback=lambda p, mp, na: self.progress.emit(p, mp, na),
                     stop_callback=self.is_stop_requested,
-                    unique_links_check=self.stop_on_no_new_links
+                    unique_links_check=self.stop_on_no_new_links,
+                    num_threads=self.num_threads
                 )
                 
                 if not self._stop_requested:
@@ -1448,7 +1436,6 @@ class ArticleFetchWorker(QThread):
             logging.error(f"Error in ArticleFetchWorker: {e}", exc_info=True)
             self.status.emit(f"Error fetching articles: {str(e)}")
             self.finished.emit([])
-
 
 class ArticleProcessWorker(QThread):
     progress = pyqtSignal(int, int)
@@ -1733,6 +1720,18 @@ class ArticleListWidget(QFrame):
             old_title, old_metadata, _ = self.articles[url]
             self.articles[url] = (title or old_title, old_metadata, status)
             self.filter_articles()
+
+    def update_article_statuses(self, urls, status):
+        """Efficiently updates the status for a batch of URLs and refreshes the UI once."""
+        for url in urls:
+            if url in self.articles:
+                # Unpack, update status, and repack the tuple
+                title, metadata, _ = self.articles[url]
+                self.articles[url] = (title, metadata, status)
+        
+        # After updating all the data, refresh the visual list just once.
+        self.filter_articles()
+        
         
     def clear_articles(self):
         if self.articles and QMessageBox.question(self, "Confirm Clear",
@@ -2028,6 +2027,18 @@ class MisesWireApp(QMainWindow):
         pm_layout = QHBoxLayout(); pm_layout.addWidget(QLabel("Max Pages:")); pm_layout.addWidget(self.pm_pages_spinbox)
         index_config_layout.addRow(self.pm_checkbox, pm_layout)
         
+        # Add thread controls for fetching
+        threads_layout = QHBoxLayout()
+        self.fetch_threads_spinbox = QSpinBox()
+        self.fetch_threads_spinbox.setRange(1, 32)
+        self.fetch_threads_spinbox.setValue(8) # A good default for fetching
+        self.fetch_threads_slider = QSlider(Qt.Horizontal)
+        self.fetch_threads_slider.setRange(1, 32)
+        self.fetch_threads_slider.setValue(8)
+        threads_layout.addWidget(self.fetch_threads_spinbox)
+        threads_layout.addWidget(self.fetch_threads_slider)
+        index_config_layout.addRow("Fetching Threads:", threads_layout)
+        
         self.stop_on_no_new_links = QCheckBox("Stop when no new unique links are found"); self.stop_on_no_new_links.setChecked(True)
         index_config_layout.addRow(self.stop_on_no_new_links)
         layout.addWidget(self.index_config_group)
@@ -2146,17 +2157,33 @@ class MisesWireApp(QMainWindow):
         self.statusBar().showMessage("Ready")
 
     def setup_signal_connections(self):
+        # --- Source Tab Connections ---
         self.fetch_button.clicked.connect(self.fetch_articles)
         self.stop_button.clicked.connect(self.stop_current_worker)
+        
+        # Connect the new fetching thread slider and spinbox to keep them in sync
+        self.fetch_threads_slider.valueChanged.connect(self.fetch_threads_spinbox.setValue)
+        self.fetch_threads_spinbox.valueChanged.connect(self.fetch_threads_slider.setValue)
+
+        # --- Processing Tab Connections ---
+        # Connect the processing thread slider and spinbox to keep them in sync
         self.threads_slider.valueChanged.connect(self.threads_spinbox.setValue)
         self.threads_spinbox.valueChanged.connect(self.threads_slider.setValue)
         self.process_button.clicked.connect(self.process_articles)
+
+        # --- Export Tab Connections ---
         self.create_epub_button.clicked.connect(self.create_epub_file)
         self.split_epub_checkbox.stateChanged.connect(self.split_count_spinbox.setEnabled)
-        # self.article_list_widget.article_list.model().rowsInserted.connect(self.update_ui_state) # <<< DELETE THIS LINE
-        self.article_list_widget.article_list.model().rowsRemoved.connect(self.update_ui_state)
         self.open_folder_button.clicked.connect(self.open_destination_folder)
 
+        # --- Article List Widget Connections ---
+        # CRITICAL FIX: The following line is commented out. Connecting it causes the UI to freeze
+        # by trying to update the stats thousands of times during a batch add.
+        # The UI is now updated manually at the end of batch operations.
+        # self.article_list_widget.article_list.model().rowsInserted.connect(self.update_ui_state)
+        
+        # This connection is safe because removing items is not a batch operation.
+        self.article_list_widget.article_list.model().rowsRemoved.connect(self.update_ui_state)
 
     def closeEvent(self, event):
         self.save_settings()
@@ -2262,9 +2289,11 @@ class MisesWireApp(QMainWindow):
                 return
 
             self.set_busy(True, "fetch")
+            # Pass the new thread count from the UI to the worker
             self.current_worker = ArticleFetchWorker(
                 fetch_tasks, 
-                self.stop_on_no_new_links.isChecked()
+                self.stop_on_no_new_links.isChecked(),
+                num_threads=self.fetch_threads_spinbox.value()
             )
             self.current_worker.progress.connect(self.update_fetch_progress)
             self.current_worker.finished.connect(self.handle_fetch_finished)
@@ -2313,7 +2342,10 @@ class MisesWireApp(QMainWindow):
             return
         self.processed_chapters.clear()
         self.set_busy(True, "process")
-        for url in urls_to_process: self.article_list_widget.update_article_status(url, "processing")
+
+
+        self.article_list_widget.update_article_statuses(urls_to_process, "processing")
+        
         self.current_worker = ArticleProcessWorker(urls_to_process, self.download_images_checkbox.isChecked(), self.threads_spinbox.value())
         self.current_worker.progress.connect(self.update_process_progress)
         self.current_worker.article_processed.connect(self.handle_article_processed)

@@ -1346,8 +1346,8 @@ def create_epub(chapters, save_dir, epub_title, cover_path=None, author="Mises W
     intro_title = "About This Collection"
     intro_content = f"""<div style="text-align: center; margin: 2em 0;">
         <h1>{epub_title}</h1>
-        <p style="font-size: 1.2em; margin: 1em 0;">A curated collection of articles from Mises Wire</p><hr style="width: 50%; margin: 2em auto;"/></div>
-        <div style="margin: 2em 0;"><h2>About Mises Wire</h2><p>Mises Wire is the Mises Institute's publication featuring contemporary news, opinion, and analysis from the Austrian School of economics perspective.</p>
+        <p style="font-size: 1.2em; margin: 1em 0;">A curated collection of articles from Mises.org</p><hr style="width: 50%; margin: 2em auto;"/></div>
+        <div style="margin: 2em 0;"><h2>About This Collection</h2><p>This book contains articles from Mises.org, featuring contemporary news, opinion, and analysis from the Austrian School of economics perspective.</p>
         <h2>Collection Details</h2><ul><li><strong>Articles:</strong> {len(chapters)}</li><li><strong>Generated:</strong> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</li><li><strong>Generator:</strong> {APP_NAME} v{APP_VERSION}</li></ul>
         <h2>Reading Notes</h2><p>This collection is organized by publication date, with the most recent articles first. Each article includes the original publication date, author information, and source URL.</p></div>"""
     intro_chapter = epub.EpubHtml(title=intro_title, file_name='intro.xhtml', content=intro_content, lang=language)
@@ -1405,47 +1405,50 @@ def create_epub(chapters, save_dir, epub_title, cover_path=None, author="Mises W
 # --- Enhanced Worker Threads for GUI ---
 class ArticleFetchWorker(QThread):
     finished = pyqtSignal(list)
-
     progress = pyqtSignal(int, int, int)
     status = pyqtSignal(str)
-    
-    def __init__(self, url, max_pages, include_power_market=False, stop_on_no_new_links=True):
+
+    def __init__(self, fetch_tasks, stop_on_no_new_links=True):
         super().__init__()
-        self.url = url
-        self.max_pages = max_pages
-        self.include_power_market = include_power_market
+        self.fetch_tasks = fetch_tasks
         self.stop_on_no_new_links = stop_on_no_new_links
         self._stop_requested = False
-        
-    def stop(self): self._stop_requested = True
-    def is_stop_requested(self): return self._stop_requested
-        
+
+    def stop(self):
+        self._stop_requested = True
+
+    def is_stop_requested(self):
+        return self._stop_requested
+
     def run(self):
+        all_article_links = set()
         try:
-            self.status.emit(f"Fetching articles from {self.url}...")
-            links = get_article_links(
-                self.url, self.max_pages,
-                progress_callback=lambda p, mp, na: self.progress.emit(p, mp, na),
-                stop_callback=self.is_stop_requested,
-                unique_links_check=self.stop_on_no_new_links
-            )
-            if self._stop_requested:
-                self.status.emit("Fetching stopped by user"); self.finished.emit([]); return
-            
-            if self.include_power_market and not self._stop_requested:
-                self.status.emit("Fetching Power Market articles...")
-                pm_links = get_article_links(
-                    "https://mises.org/power-market", min(self.max_pages, 20),
+            for task in self.fetch_tasks:
+                if self._stop_requested:
+                    self.status.emit("Fetching stopped by user")
+                    break
+                
+                self.status.emit(f"Fetching articles from {task['name']}...")
+                
+                links_for_task = get_article_links(
+                    task['url'], task['pages'],
                     progress_callback=lambda p, mp, na: self.progress.emit(p, mp, na),
                     stop_callback=self.is_stop_requested,
                     unique_links_check=self.stop_on_no_new_links
                 )
-                if not self._stop_requested: links = list(set(links) | set(pm_links))
-            
-            self.finished.emit(links if not self._stop_requested else [])
+                
+                if not self._stop_requested:
+                    newly_found = len(set(links_for_task) - all_article_links)
+                    self.status.emit(f"Found {newly_found} new articles from {task['name']}. Total unique: {len(all_article_links) + newly_found}")
+                    all_article_links.update(links_for_task)
+
+            final_links = list(all_article_links) if not self._stop_requested else []
+            self.finished.emit(final_links)
         except Exception as e:
             logging.error(f"Error in ArticleFetchWorker: {e}", exc_info=True)
-            self.status.emit(f"Error fetching articles: {str(e)}"); self.finished.emit([])
+            self.status.emit(f"Error fetching articles: {str(e)}")
+            self.finished.emit([])
+
 
 class ArticleProcessWorker(QThread):
     progress = pyqtSignal(int, int)
@@ -1967,46 +1970,63 @@ class MisesWireApp(QMainWindow):
         right_layout.addWidget(self.article_list_widget)
         right_layout.addWidget(self.status_widget)
         self.main_splitter.addWidget(right_widget)
-        
+
     def setup_source_tab(self):
         tab, layout = QWidget(), QVBoxLayout()
         tab.setLayout(layout)
-        source_group = QGroupBox("📚 Article Source Configuration")
-        source_layout = QFormLayout(source_group)
+
+        # Group for picking the source type
+        source_type_groupbox = QGroupBox("📚 Source Type")
+        source_type_layout = QVBoxLayout(source_type_groupbox)
         self.source_type_group = QButtonGroup()
-        self.source_index_radio = QRadioButton("Fetch from Index Pages"); self.source_index_radio.setChecked(True)
-        self.source_url_radio = QRadioButton("Single Article URL")
-        self.source_list_radio = QRadioButton("Custom List of URLs")
+        
+        self.source_index_radio = QRadioButton("Fetch from Index Pages")
+        self.source_index_radio.setChecked(True)
+        self.source_url_radio = QRadioButton("Add Single Article URL")
+        self.source_list_radio = QRadioButton("Add from Custom List of URLs")
+        
         self.source_type_group.addButton(self.source_index_radio, 0)
         self.source_type_group.addButton(self.source_url_radio, 1)
         self.source_type_group.addButton(self.source_list_radio, 2)
         
-        url_layout = QHBoxLayout(); self.index_url_input = QLineEdit("https://mises.org/wire")
-        self.url_presets_combo = QComboBox(); self.url_presets_combo.addItems(["Mises Wire", "Power Market"])
-        url_layout.addWidget(self.index_url_input); url_layout.addWidget(self.url_presets_combo)
-        source_layout.addRow(self.source_index_radio, url_layout)
+        source_type_layout.addWidget(self.source_index_radio)
+        source_type_layout.addWidget(self.source_url_radio)
+        source_type_layout.addWidget(self.source_list_radio)
+        layout.addWidget(source_type_groupbox)
         
-        page_layout = QHBoxLayout(); self.pages_spinbox = QSpinBox(); self.pages_spinbox.setRange(1, 9999); self.pages_spinbox.setValue(50)
-        self.pages_slider = QSlider(Qt.Horizontal); self.pages_slider.setRange(1, 200); self.pages_slider.setValue(50)
-        page_layout.addWidget(self.pages_spinbox); page_layout.addWidget(self.pages_slider)
-        source_layout.addRow("Max Pages:", page_layout)
-
-        options_layout = QVBoxLayout(); self.include_power_market = QCheckBox("Include Power Market articles")
-        self.stop_on_no_new_links = QCheckBox("Stop when no new unique links found"); self.stop_on_no_new_links.setChecked(True)
-        options_layout.addWidget(self.include_power_market); options_layout.addWidget(self.stop_on_no_new_links)
-        source_layout.addRow("Options:", options_layout)
-
+        # Group for Index Fetch configuration
+        self.index_config_group = QGroupBox("Index Source Configuration")
+        index_config_layout = QFormLayout(self.index_config_group)
+        
+        self.wire_checkbox = QCheckBox("Mises Wire")
+        self.wire_checkbox.setChecked(True)
+        self.wire_pages_spinbox = QSpinBox(); self.wire_pages_spinbox.setRange(1, 9999); self.wire_pages_spinbox.setValue(50)
+        wire_layout = QHBoxLayout(); wire_layout.addWidget(QLabel("Max Pages:")); wire_layout.addWidget(self.wire_pages_spinbox)
+        index_config_layout.addRow(self.wire_checkbox, wire_layout)
+        
+        self.pm_checkbox = QCheckBox("Power & Market")
+        self.pm_pages_spinbox = QSpinBox(); self.pm_pages_spinbox.setRange(1, 9999); self.pm_pages_spinbox.setValue(10)
+        pm_layout = QHBoxLayout(); pm_layout.addWidget(QLabel("Max Pages:")); pm_layout.addWidget(self.pm_pages_spinbox)
+        index_config_layout.addRow(self.pm_checkbox, pm_layout)
+        
+        self.stop_on_no_new_links = QCheckBox("Stop when no new unique links are found"); self.stop_on_no_new_links.setChecked(True)
+        index_config_layout.addRow(self.stop_on_no_new_links)
+        layout.addWidget(self.index_config_group)
+        
+        # Controls for Single URL / List
         self.specific_url_input = QLineEdit(); self.specific_url_input.setPlaceholderText("https://mises.org/wire/article-title")
-        source_layout.addRow(self.source_url_radio, self.specific_url_input)
+        layout.addWidget(self.specific_url_input)
         
-        self.url_list_text = QTextEdit(); self.url_list_text.setPlaceholderText("Enter URLs, one per line..."); self.url_list_text.setMaximumHeight(100)
-        source_layout.addRow(self.source_list_radio, self.url_list_text)
-
-        layout.addWidget(source_group)
-        button_layout = QHBoxLayout(); self.fetch_button = QPushButton("🔍 Fetch Articles")
+        self.url_list_text = QTextEdit(); self.url_list_text.setPlaceholderText("Enter URLs, one per line..."); self.url_list_text.setMaximumHeight(150)
+        layout.addWidget(self.url_list_text)
+        
+        # Connect radio button to UI update function
+        self.source_type_group.buttonClicked.connect(self.update_source_ui)
+        
+        button_layout = QHBoxLayout()
+        self.fetch_button = QPushButton("🔍 Fetch / Add Articles")
         self.stop_button = QPushButton("⏹️ Stop"); self.stop_button.setVisible(False)
-        self.add_url_button = QPushButton("➕ Add URL")
-        button_layout.addWidget(self.fetch_button); button_layout.addWidget(self.stop_button); button_layout.addWidget(self.add_url_button)
+        button_layout.addWidget(self.fetch_button); button_layout.addWidget(self.stop_button)
         layout.addLayout(button_layout)
         
         self.fetch_progress = QProgressBar(); self.fetch_progress.setVisible(False)
@@ -2014,6 +2034,15 @@ class MisesWireApp(QMainWindow):
         layout.addWidget(self.fetch_progress); layout.addWidget(self.fetch_status_label)
         layout.addStretch()
         self.tab_widget.addTab(tab, "📚 Source")
+
+        # Initial UI state
+        self.update_source_ui()
+
+    def update_source_ui(self):
+        source_type = self.source_type_group.checkedId()
+        self.index_config_group.setVisible(source_type == 0)
+        self.specific_url_input.setVisible(source_type == 1)
+        self.url_list_text.setVisible(source_type == 2)
         
     def setup_processing_tab(self):
         tab, layout = QWidget(), QVBoxLayout()
@@ -2050,8 +2079,8 @@ class MisesWireApp(QMainWindow):
         tab.setLayout(layout)
         export_group = QGroupBox("📦 EPUB Export Configuration")
         export_layout = QFormLayout(export_group)
-        self.epub_title_input = QLineEdit("Mises Wire Collection"); export_layout.addRow("EPUB Title:", self.epub_title_input)
-        self.author_input = QLineEdit("Mises Wire"); export_layout.addRow("Author:", self.author_input)
+        self.epub_title_input = QLineEdit("Mises.org Collection"); export_layout.addRow("EPUB Title:", self.epub_title_input)
+        self.author_input = QLineEdit("Mises.org"); export_layout.addRow("Author:", self.author_input)
         
         save_layout = QHBoxLayout(); self.save_dir_input = QLineEdit()
         browse_save_button = QPushButton("Browse..."); browse_save_button.clicked.connect(self.browse_save_dir)
@@ -2073,7 +2102,6 @@ class MisesWireApp(QMainWindow):
         export_button_layout.addWidget(self.create_epub_button)
         export_button_layout.addWidget(self.open_folder_button)
         layout.addLayout(export_button_layout)
-        layout.addWidget(self.create_epub_button)
         self.epub_progress = QProgressBar(); self.epub_progress.setVisible(False)
         layout.addWidget(self.epub_progress)
         layout.addStretch()
@@ -2099,12 +2127,8 @@ class MisesWireApp(QMainWindow):
         self.statusBar().showMessage("Ready")
 
     def setup_signal_connections(self):
-        self.url_presets_combo.currentTextChanged.connect(self.load_url_preset)
-        self.pages_slider.valueChanged.connect(self.pages_spinbox.setValue)
-        self.pages_spinbox.valueChanged.connect(self.pages_slider.setValue)
         self.fetch_button.clicked.connect(self.fetch_articles)
         self.stop_button.clicked.connect(self.stop_current_worker)
-        self.add_url_button.clicked.connect(self.add_specific_url)
         self.threads_slider.valueChanged.connect(self.threads_spinbox.setValue)
         self.threads_spinbox.valueChanged.connect(self.threads_slider.setValue)
         self.process_button.clicked.connect(self.process_articles)
@@ -2156,10 +2180,6 @@ class MisesWireApp(QMainWindow):
         self.setStyleSheet(DARK_STYLESHEET if self.is_dark_theme else LIGHT_STYLESHEET)
         self.cover_preview.clear_image() # Re-apply style
 
-    def load_url_preset(self, preset):
-        urls = {"Mises Wire": "https://mises.org/wire", "Power Market": "https://mises.org/power-market"}
-        self.index_url_input.setText(urls.get(preset, ""))
-
     def browse_save_dir(self):
         directory = QFileDialog.getExistingDirectory(self, "Select Save Directory", self.save_dir_input.text())
         if directory: self.save_dir_input.setText(directory)
@@ -2199,69 +2219,69 @@ class MisesWireApp(QMainWindow):
             self.fetch_progress.setVisible(False); self.process_progress.setVisible(False); self.epub_progress.setVisible(False)
             self.current_worker = None
 
-    def add_specific_url(self):
-        url = self.specific_url_input.text().strip()
-        if is_valid_url(url):
-            if self.article_list_widget.add_article(url):
-                self.status_widget.add_log_message(f"Added URL: {url}", "info")
-                self.specific_url_input.clear()
-                self.update_ui_state()
-            else:
-                self.status_widget.add_log_message(f"URL already in list: {url}", "warning")
-        else:
-            QMessageBox.warning(self, "Invalid URL", "Please enter a valid article URL.")
-
     def fetch_articles(self):
-        self.set_busy(True, "fetch")
         source_type = self.source_type_group.checkedId()
-        if source_type == 0: # Index
+        
+        if source_type == 0: # Index Fetch
+            fetch_tasks = []
+            if self.wire_checkbox.isChecked():
+                fetch_tasks.append({
+                    'name': 'Mises Wire',
+                    'url': 'https://mises.org/wire',
+                    'pages': self.wire_pages_spinbox.value()
+                })
+            if self.pm_checkbox.isChecked():
+                fetch_tasks.append({
+                    'name': 'Power & Market',
+                    'url': 'https://mises.org/power-market',
+                    'pages': self.pm_pages_spinbox.value()
+                })
             
-            # --- START OF PRECISE FIX ---
-            
-            # The primary source for "Index Fetch" is now hardcoded to Mises Wire.
-            # This prevents confusion where the URL box says one thing and the checkbox another.
-            base_url = "https://mises.org/wire"
-            
-            # We can optionally update the UI to reflect this, ensuring no confusion.
-            self.index_url_input.setText(base_url)
-            
-            pages = self.pages_spinbox.value()
-            
-            # The worker thread is now created with the correct, non-conflicting parameters.
-            # It will always fetch from Mises Wire, and ONLY add Power Market articles
-            # if the checkbox is checked.
+            if not fetch_tasks:
+                QMessageBox.warning(self, "No Source Selected", "Please select at least one source to fetch articles from.")
+                return
+
+            self.set_busy(True, "fetch")
             self.current_worker = ArticleFetchWorker(
-                base_url, 
-                pages, 
-                self.include_power_market.isChecked(), 
+                fetch_tasks, 
                 self.stop_on_no_new_links.isChecked()
             )
-
-            # --- END OF PRECISE FIX ---
-
             self.current_worker.progress.connect(self.update_fetch_progress)
             self.current_worker.finished.connect(self.handle_fetch_finished)
             self.current_worker.status.connect(self.status_widget.set_status)
             self.current_worker.start()
+            
         elif source_type == 1: # Single URL
-            self.add_specific_url()
-            self.set_busy(False)
+            url = self.specific_url_input.text().strip()
+            if is_valid_url(url):
+                if self.article_list_widget.add_article(url):
+                    self.status_widget.add_log_message(f"Added URL: {url}", "info")
+                    self.specific_url_input.clear()
+                    self.update_ui_state()
+                else:
+                    self.status_widget.add_log_message(f"URL already in list: {url}", "warning")
+            else:
+                QMessageBox.warning(self, "Invalid URL", "Please enter a valid article URL.")
+                
         elif source_type == 2: # URL List
             urls = [line.strip() for line in self.url_list_text.toPlainText().splitlines() if line.strip()]
+            if not urls:
+                 QMessageBox.warning(self, "Empty List", "Please enter some URLs into the text box.")
+                 return
             added = self.article_list_widget.add_articles(urls)
             self.status_widget.add_log_message(f"Added {added} new URLs from list.", "info")
             self.update_ui_state()
-            self.set_busy(False)
 
     def update_fetch_progress(self, page, max_pages, count):
+        # This progress will reset for each source type, which is acceptable behavior.
         self.fetch_progress.setRange(0, max_pages)
         self.fetch_progress.setValue(page)
-        self.fetch_status_label.setText(f"Page {page}/{max_pages} | Found {count} articles")
+        self.fetch_status_label.setText(f"Scanning Page {page}/{max_pages}... | Total Found: {count}")
     
     def handle_fetch_finished(self, links):
         added = self.article_list_widget.add_articles(links)
         self.status_widget.add_log_message(f"Fetch complete. Added {added} new article URLs.", "success")
-        self.fetch_status_label.setText(f"Fetch complete. Found {len(links)} articles.")
+        self.fetch_status_label.setText(f"Fetch complete. Found {len(links)} total articles.")
         self.set_busy(False)
         self.update_ui_state()
         if links: self.tab_widget.setCurrentIndex(1) # Move to processing tab

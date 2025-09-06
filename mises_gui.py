@@ -811,12 +811,12 @@ def get_session():
     s.proxies = PROXIES
     return s
 
-def cached_get(url):
+def cached_get(url, use_cache=True):
     """
-    Retrieves the content of a URL using caching if CACHE_DIR is set.
+    Retrieves the content of a URL, using caching if enabled and requested.
     Cached files are stored as MD5 hashes of the URL in the cache directory.
     """
-    if CACHE_DIR:
+    if use_cache and CACHE_DIR:
         cache_file = os.path.join(CACHE_DIR, "cache_" + hashlib.md5(url.encode()).hexdigest() + ".html")
         if os.path.exists(cache_file):
             logging.info(f"Loading cached URL: {url}")
@@ -832,6 +832,8 @@ def cached_get(url):
                 f.write(text)
             return text
     else:
+        if not use_cache and CACHE_DIR:
+            logging.info(f"Bypassing cache for URL: {url}")
         with get_session() as session:
             response = session.get(url, timeout=TIMEOUT, verify=VERIFY)
             response.raise_for_status()
@@ -909,11 +911,12 @@ def get_article_links(index_url, max_pages=9999, progress_callback=None, stop_ca
         if stop_callback and stop_callback(): return set(), True
         page_url = f"{index_url}?page={page_num}" if page_num > 0 else index_url
         try:
-            page_content = cached_get(page_url)
+            page_content = cached_get(page_url, use_cache=False)
             soup = BeautifulSoup(page_content, 'html.parser')
             page_links = set()
             potential_links = soup.select('article a[href], div.views-field-title span.field-content a[href]')
             for a_tag in potential_links:
+
                 href = a_tag.get('href', '')
                 if href and href.startswith('/'):
                     absolute_url = urljoin(index_url, href)
@@ -940,7 +943,8 @@ def get_article_links(index_url, max_pages=9999, progress_callback=None, stop_ca
                 logging.info("Fetching stopped by user")
                 break
 
-            page_range = range(page_num, page_num + chunk_size)
+            page_range = range(page_num, min(page_num + chunk_size, max_pages))
+
             future_to_page = {executor.submit(fetch_page_links, p): p for p in page_range}
             
             chunk_had_new_links = False
@@ -1330,12 +1334,33 @@ def create_epub(chapters, save_dir, epub_title, cover_path=None, author="Mises W
             logging.error(f"Error adding cover image: {e}")
 
     intro_title = "About This Collection"
-    intro_content = f"""<div style="text-align: center; margin: 2em 0;">
+
+    # Check if a cover image was provided by the user and create an HTML tag for it
+    cover_html = ''
+    if cover_path: # <--- THIS IS THE CORRECTED LINE
+        # The path 'images/cover.jpg' is the default set by book.set_cover
+        cover_html = '<div style="text-align: center;"><img src="images/cover.jpg" alt="Cover Image" style="max-width: 80%; max-height: 50vh; height: auto; margin: 1em 0;"/></div>'
+
+
+    # Summarized text about the Mises Institute
+    summary_text = """
+    <h2>About the Mises Institute</h2>
+    <p style="text-indent: 1.2em; text-align: justify;">The Mises Institute is a non-profit organization dedicated to promoting teaching and research in the Austrian School of economics, individual freedom, honest history, and international peace. Founded in 1982 in the tradition of Ludwig von Mises and Murray N. Rothbard, it is a non-political, non-partisan advocate for a private property order, seeking a radical shift in the intellectual climate away from statism.</p>
+    <p style="text-indent: 1.2em; text-align: justify;">The Institute serves students, scholars, and the general public by offering educational programs like Mises University, fellowships, academic conferences, and numerous publications. Its website, Mises.org, is a vast global resource providing thousands of free books, articles, and media, making the ideas of liberty and Austrian economics widely accessible at no charge.</p>
+    """
+
+    # Combine all parts into the final intro page content
+    intro_content = f"""
+    <div style="text-align: center; margin: 2em 0;">
         <h1>{epub_title}</h1>
-        <p style="font-size: 1.2em; margin: 1em 0;">A curated collection of articles from Mises.org</p><hr style="width: 50%; margin: 2em auto;"/></div>
-        <div style="margin: 2em 0;"><h2>About This Collection</h2><p>This book contains articles from Mises.org, featuring contemporary news, opinion, and analysis from the Austrian School of economics perspective.</p>
-        <h2>Collection Details</h2><ul><li><strong>Articles:</strong> {len(chapters)}</li><li><strong>Generated:</strong> {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</li><li><strong>Generator:</strong> {APP_NAME} v{APP_VERSION}</li></ul>
-        <h2>Reading Notes</h2><p>This collection is organized by publication date, with the most recent articles first. Each article includes the original publication date, author information, and source URL.</p></div>"""
+        <p style="font-size: 1.2em; margin: 1em 0;">A collection of {len(chapters)} articles from Mises.org</p>
+    </div>
+    {cover_html}
+    <hr style="width: 50%; margin: 2em auto;"/>
+    <div style="margin: 2em 0;">
+        {summary_text}
+    </div>"""
+
     intro_chapter = epub.EpubHtml(title=intro_title, file_name='intro.xhtml', content=intro_content, lang=language)
     book.add_item(intro_chapter)
 
@@ -1517,52 +1542,88 @@ class EpubCreationWorker(QThread):
 
 
     
-    def __init__(self, chapters, save_dir, epub_title, author, cover_path=None, split=None):
+    def __init__(self, chapters, save_dir, epub_title, author, cover_path=None, split_strategy=None, split_count=None):
         super().__init__()
         self.chapters = chapters
         self.save_dir = save_dir
         self.epub_title = epub_title
         self.author = author
         self.cover_path = cover_path
-        self.split = split
+        self.split_strategy = split_strategy
+        self.split_count = split_count # New attribute
         self._stop_requested = False
-        
+
     def stop(self): self._stop_requested = True
-        
+
     def run(self):
         try:
             if not self.chapters:
-                self.status.emit("No articles to create EPUB from."); self.finished.emit([]); return
-            self.status.emit(f"Creating EPUB with {len(self.chapters)} articles...")
-            
+                self.status.emit("No articles to create EPUB from.")
+                self.finished.emit([])
+                return
+
+            self.status.emit(f"Sorting {len(self.chapters)} articles by date (newest first)...")
+            self.chapters.sort(key=lambda x: parse_date(x[2].get('date', '')), reverse=True)
+
             generated_files = []
-            if self.split:
-                num_files = self.split
+            jobs = []
+
+            if self.split_strategy == "Split by Number of Files" and self.split_count:
+                self.status.emit(f"Grouping articles into {self.split_count} files...")
                 total = len(self.chapters)
+                num_files = self.split_count
+                # This formula correctly calculates chunk size, distributing remainders
                 chunk_size = (total + num_files - 1) // num_files
                 for i in range(num_files):
-                    if self._stop_requested: break
                     start, end = i * chunk_size, min((i + 1) * chunk_size, total)
-                    if start < end:
-                        split_chapters = self.chapters[start:end]
-                        split_title = f"{self.epub_title} - Part {i+1}"
-                        self.status.emit(f"Creating Part {i+1}/{num_files} with {len(split_chapters)} articles...")
-                        filename = create_epub(split_chapters, self.save_dir, split_title, self.cover_path, self.author,
-                                             status_callback=lambda s: self.status.emit(s))
-                        if filename: generated_files.append(filename)
-                        self.progress.emit(i + 1, num_files)
-            else:
-                filename = create_epub(self.chapters, self.save_dir, self.epub_title, self.cover_path, self.author,
+                    if start < end: # Avoid creating empty files
+                        title = f"{self.epub_title} - Part {i+1}"
+                        jobs.append((title, self.chapters[start:end]))
+
+            elif self.split_strategy == "Split by Year":
+                self.status.emit("Grouping articles by year...")
+                chapters_by_year = {}
+                for chapter_data in self.chapters:
+                    dt = parse_date(chapter_data[2].get('date', ''))
+                    year = dt.year if dt != datetime.min else "Undated"
+                    if year not in chapters_by_year:
+                        chapters_by_year[year] = []
+                    chapters_by_year[year].append(chapter_data)
+                for year in sorted(chapters_by_year.keys(), reverse=True):
+                    title = f"{self.epub_title} - {year}"
+                    jobs.append((title, chapters_by_year[year]))
+
+            elif self.split_strategy == "Split by Month":
+                self.status.emit("Grouping articles by month...")
+                chapters_by_month = {}
+                for chapter_data in self.chapters:
+                    dt = parse_date(chapter_data[2].get('date', ''))
+                    key = dt.strftime('%Y-%m') if dt != datetime.min else "Undated"
+                    if key not in chapters_by_month:
+                        chapters_by_month[key] = []
+                    chapters_by_month[key].append(chapter_data)
+                for key in sorted(chapters_by_month.keys(), reverse=True):
+                    title = f"{self.epub_title} - {key}"
+                    jobs.append((title, chapters_by_month[key]))
+            
+            else:  # "Single File (Newest First)" is the default
+                jobs.append((self.epub_title, self.chapters))
+
+            # Execute the jobs
+            total_jobs = len(jobs)
+            for i, (job_title, job_chapters) in enumerate(jobs):
+                if self._stop_requested: break
+                self.status.emit(f"Creating EPUB {i+1}/{total_jobs}: '{job_title}' with {len(job_chapters)} articles...")
+                filename = create_epub(job_chapters, self.save_dir, job_title, self.cover_path, self.author,
                                      status_callback=lambda s: self.status.emit(s))
                 if filename: generated_files.append(filename)
-                self.progress.emit(1, 1)
-                
+                self.progress.emit(i + 1, total_jobs)
+
             self.status.emit("EPUB creation stopped by user" if self._stop_requested else
                              f"EPUB creation complete. Generated {len(generated_files)} files.")
             self.finished.emit(generated_files)
         except Exception as e:
             logging.error(f"Error in EpubCreationWorker: {e}", exc_info=True)
-            self.status.emit(f"Error creating EPUB: {str(e)}"); self.finished.emit([])
 
 # --- Enhanced Custom Widgets ---
 class StatusWidget(QFrame):
@@ -2073,7 +2134,12 @@ class MisesWireApp(QMainWindow):
         self.index_config_group.setVisible(source_type == 0)
         self.specific_url_input.setVisible(source_type == 1)
         self.url_list_text.setVisible(source_type == 2)
-        
+
+    def update_split_ui(self):
+        is_split_by_number = self.split_strategy_combo.currentText() == "Split by Number of Files"
+        self.split_count_spinbox.setVisible(is_split_by_number)
+
+
     def setup_processing_tab(self):
         tab, layout = QWidget(), QVBoxLayout()
         tab.setLayout(layout)
@@ -2088,7 +2154,17 @@ class MisesWireApp(QMainWindow):
         options_layout.addRow("Processing Threads:", threads_layout)
         layout.addWidget(options_group)
         
-        self.process_button = QPushButton("🚀 Process Articles"); self.process_button.setEnabled(False)
+        process_buttons_layout = QHBoxLayout()
+        self.process_button = QPushButton("🚀 Process All Articles")
+        self.process_button.setEnabled(False)
+        self.reprocess_failed_button = QPushButton("🔁 Reprocess Failed")
+        self.reprocess_failed_button.setEnabled(False)
+        process_buttons_layout.addWidget(self.process_button)
+        process_buttons_layout.addWidget(self.reprocess_failed_button)
+        layout.addLayout(process_buttons_layout)
+
+        self.process_progress = QProgressBar()
+        self.process_progress.setVisible(False)
         layout.addWidget(self.process_button)
         self.process_progress = QProgressBar(); self.process_progress.setVisible(False)
         self.process_status_label = QLabel(""); self.process_status_label.setAlignment(Qt.AlignCenter)
@@ -2103,39 +2179,95 @@ class MisesWireApp(QMainWindow):
         layout.addWidget(stats_group)
         layout.addStretch()
         self.tab_widget.addTab(tab, "⚙️ Processing")
+
+
+    def reprocess_failed_articles(self):
+        failed_urls = [url for url, data in self.article_list_widget.articles.items() if data[2] == 'failed']
+        if not failed_urls:
+            QMessageBox.information(self, "No Failed Articles", "There are no failed articles to reprocess.")
+            return
         
+        self.status_widget.add_log_message(f"Starting to reprocess {len(failed_urls)} failed articles.", "info")
+        # Note: We do NOT clear self.processed_chapters here, so we can add to the existing successful ones.
+        self.start_processing_job(failed_urls)
+
+    def start_processing_job(self, urls_to_process):
+        if not urls_to_process:
+            return
+
+        self.set_busy(True, "process")
+        self.article_list_widget.update_article_statuses(urls_to_process, "processing")
+        
+        self.current_worker = ArticleProcessWorker(urls_to_process, self.download_images_checkbox.isChecked(), self.threads_spinbox.value())
+        self.current_worker.progress.connect(self.update_process_progress)
+        self.current_worker.article_processed.connect(self.handle_article_processed)
+        self.current_worker.article_failed.connect(self.handle_article_failed)
+        self.current_worker.finished.connect(self.handle_process_finished)
+        self.current_worker.status.connect(self.status_widget.add_log_message)
+        self.current_worker.start()
+
+
+       
     def setup_export_tab(self):
         tab, layout = QWidget(), QVBoxLayout()
         tab.setLayout(layout)
         export_group = QGroupBox("📦 EPUB Export Configuration")
         export_layout = QFormLayout(export_group)
-        self.epub_title_input = QLineEdit("Mises.org Collection"); export_layout.addRow("EPUB Title:", self.epub_title_input)
-        self.author_input = QLineEdit("Mises.org"); export_layout.addRow("Author:", self.author_input)
+        self.epub_title_input = QLineEdit("Mises.org Collection")
+        export_layout.addRow("EPUB Title:", self.epub_title_input)
+        self.author_input = QLineEdit("Mises.org")
+        export_layout.addRow("Author:", self.author_input)
         
-        save_layout = QHBoxLayout(); self.save_dir_input = QLineEdit()
-        browse_save_button = QPushButton("Browse..."); browse_save_button.clicked.connect(self.browse_save_dir)
-        save_layout.addWidget(self.save_dir_input); save_layout.addWidget(browse_save_button)
+        save_layout = QHBoxLayout()
+        self.save_dir_input = QLineEdit()
+        browse_save_button = QPushButton("Browse...")
+        browse_save_button.clicked.connect(self.browse_save_dir)
+        save_layout.addWidget(self.save_dir_input)
+        save_layout.addWidget(browse_save_button)
         export_layout.addRow("Save Directory:", save_layout)
 
-        split_layout = QHBoxLayout(); self.split_epub_checkbox = QCheckBox("Split into multiple files");
-        self.split_count_spinbox = QSpinBox(); self.split_count_spinbox.setRange(2, 100); self.split_count_spinbox.setEnabled(False)
-        split_layout.addWidget(self.split_epub_checkbox); split_layout.addWidget(self.split_count_spinbox);
-        export_layout.addRow("Splitting:", split_layout)
+        # --- THIS IS THE MODIFIED SECTION ---
+        split_layout = QHBoxLayout()
+        self.split_strategy_combo = QComboBox()
+        self.split_strategy_combo.addItems([
+            "Single File (Newest First)", 
+            "Split by Number of Files", 
+            "Split by Year", 
+            "Split by Month"
+        ])
+        self.split_count_spinbox = QSpinBox()
+        self.split_count_spinbox.setRange(2, 500)
+        self.split_count_spinbox.setValue(10)
+        
+        split_layout.addWidget(self.split_strategy_combo, 2) # Give combo more space
+        split_layout.addWidget(self.split_count_spinbox, 1) # Give spinbox less space
+        
+        export_layout.addRow("Splitting Strategy:", split_layout)
+        # --- END OF MODIFICATION ---
+
         layout.addWidget(export_group)
 
         self.cover_preview = CoverPreviewWidget()
         layout.addWidget(self.cover_preview)
         
         export_button_layout = QHBoxLayout()
-        self.create_epub_button = QPushButton("💾 Create EPUB"); self.create_epub_button.setEnabled(False)
-        self.open_folder_button = QPushButton("📂 Open Folder"); self.open_folder_button.setEnabled(False)
+        self.create_epub_button = QPushButton("💾 Create EPUB")
+        self.create_epub_button.setEnabled(False)
+        self.open_folder_button = QPushButton("📂 Open Folder")
+        self.open_folder_button.setEnabled(False)
         export_button_layout.addWidget(self.create_epub_button)
         export_button_layout.addWidget(self.open_folder_button)
         layout.addLayout(export_button_layout)
-        self.epub_progress = QProgressBar(); self.epub_progress.setVisible(False)
+        
+        self.epub_progress = QProgressBar()
+        self.epub_progress.setVisible(False)
         layout.addWidget(self.epub_progress)
         layout.addStretch()
         self.tab_widget.addTab(tab, "💾 Export")
+
+        # Set the initial visibility of the spinbox
+        self.update_split_ui()
+
 
     def setup_menu_bar(self):
         menu = self.menuBar()
@@ -2173,15 +2305,16 @@ class MisesWireApp(QMainWindow):
 
         # --- Export Tab Connections ---
         self.create_epub_button.clicked.connect(self.create_epub_file)
-        self.split_epub_checkbox.stateChanged.connect(self.split_count_spinbox.setEnabled)
         self.open_folder_button.clicked.connect(self.open_destination_folder)
+        self.split_strategy_combo.currentTextChanged.connect(self.update_split_ui)
 
         # --- Article List Widget Connections ---
         # CRITICAL FIX: The following line is commented out. Connecting it causes the UI to freeze
         # by trying to update the stats thousands of times during a batch add.
         # The UI is now updated manually at the end of batch operations.
         # self.article_list_widget.article_list.model().rowsInserted.connect(self.update_ui_state)
-        
+        self.reprocess_failed_button.clicked.connect(self.reprocess_failed_articles)
+
         # This connection is safe because removing items is not a batch operation.
         self.article_list_widget.article_list.model().rowsRemoved.connect(self.update_ui_state)
 
@@ -2246,6 +2379,8 @@ class MisesWireApp(QMainWindow):
         self.stats_labels['total'].setText(str(self.article_list_widget.article_list.count()))
         self.stats_labels['processed'].setText(str(len(self.processed_chapters)))
         failed_count = sum(1 for _, (_, _, status) in self.article_list_widget.articles.items() if status == 'failed')
+        self.reprocess_failed_button.setEnabled(failed_count > 0 and self.current_worker is None)
+
         self.stats_labels['failed'].setText(str(failed_count))
 
     def stop_current_worker(self):
@@ -2340,19 +2475,11 @@ class MisesWireApp(QMainWindow):
         if not urls_to_process:
             QMessageBox.information(self, "No Articles", "No articles to process.")
             return
-        self.processed_chapters.clear()
-        self.set_busy(True, "process")
-
-
-        self.article_list_widget.update_article_statuses(urls_to_process, "processing")
         
-        self.current_worker = ArticleProcessWorker(urls_to_process, self.download_images_checkbox.isChecked(), self.threads_spinbox.value())
-        self.current_worker.progress.connect(self.update_process_progress)
-        self.current_worker.article_processed.connect(self.handle_article_processed)
-        self.current_worker.article_failed.connect(self.handle_article_failed)
-        self.current_worker.finished.connect(self.handle_process_finished)
-        self.current_worker.status.connect(self.status_widget.add_log_message)
-        self.current_worker.start()
+        # This is a full run from scratch, so clear any previous results
+        self.processed_chapters.clear() 
+        self.start_processing_job(urls_to_process)
+
 
     def update_process_progress(self, current, total):
         self.process_progress.setRange(0, total)
@@ -2391,8 +2518,10 @@ class MisesWireApp(QMainWindow):
             self.epub_title_input.text(),
             self.author_input.text(),
             self.cover_preview.get_image_path(),
-            self.split_count_spinbox.value() if self.split_epub_checkbox.isChecked() else None
+            split_strategy=self.split_strategy_combo.currentText(),
+            split_count=self.split_count_spinbox.value() # <-- THIS LINE IS ADDED
         )
+
         self.current_worker.progress.connect(self.update_epub_progress)
         self.current_worker.finished.connect(self.handle_epub_finished)
         self.current_worker.status.connect(self.status_widget.add_log_message)
